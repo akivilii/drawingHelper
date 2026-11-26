@@ -262,6 +262,50 @@ class ConversionResult:
         summary.sort(key=lambda row: row["total_pixels"], reverse=True)
         return summary
 
+    def tile_grid_shape(self, tile_size: int = 32) -> tuple[int, int]:
+        """Return (num_cols, num_rows) needed to cover the image in tile_size x tile_size tiles."""
+        if tile_size <= 0:
+            raise ValueError("tile_size must be positive")
+        cols = (self.width + tile_size - 1) // tile_size
+        rows = (self.height + tile_size - 1) // tile_size
+        return cols, rows
+
+    def slice_tile(
+        self,
+        tile_col: int,
+        tile_row: int,
+        tile_size: int = 32,
+    ) -> tuple[ConversionResult, tuple[int, int, int, int]]:
+        """Extract a sub-ConversionResult for the (tile_col, tile_row) tile.
+
+        Returns
+        -------
+        sub_result: ConversionResult containing only the pixels in that tile
+        bounds: (x0, y0, x1, y1) pixel coordinates in the full image (x1/y1 exclusive)
+        """
+        cols, rows = self.tile_grid_shape(tile_size)
+        if not (0 <= tile_col < cols and 0 <= tile_row < rows):
+            raise IndexError(
+                f"Tile ({tile_col}, {tile_row}) out of bounds for grid ({cols}x{rows})"
+            )
+        x0 = tile_col * tile_size
+        y0 = tile_row * tile_size
+        x1 = min(x0 + tile_size, self.width)
+        y1 = min(y0 + tile_size, self.height)
+
+        sub = ConversionResult(
+            source_resized=self.source_resized[y0:y1, x0:x1],
+            pixel_rgb=self.pixel_rgb[y0:y1, x0:x1],
+            palette_indices=self.palette_indices[y0:y1, x0:x1],
+            distances=self.distances[y0:y1, x0:x1],
+            ciede2000_errors=self.ciede2000_errors[y0:y1, x0:x1],
+            alpha_mask=self.alpha_mask[y0:y1, x0:x1] if self.alpha_mask is not None else None,
+            palette=self.palette,
+            metric=self.metric,
+            dithering=self.dithering,
+        )
+        return sub, (x0, y0, x1, y1)
+
     def blueprint_grid(self) -> list[list[dict | None]]:
         """Return an HxW nested list mapping every pixel to its Minecraft item & shade."""
         grid: list[list[dict | None]] = []
