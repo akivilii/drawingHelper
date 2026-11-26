@@ -6,6 +6,15 @@ __pycache__/
 venv/
 .pytest_cache/
 
+# .NET / C#
+bin/
+obj/
+dist/
+installer_out/
+Payload/
+*.user
+.vs/
+
 # IDE / OS
 .vscode/
 .idea/
