@@ -8,6 +8,15 @@
     <AssemblyName>DrawingHelper</AssemblyName>
     <ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>
     <Optimize>true</Optimize>
+    <Version>1.0.1</Version>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
+    <Product>DrawingHelper</Product>
+    <Company>akivilii</Company>
+    <Authors>akivilii</Authors>
+    <Description>Minecraft pixel-art color matching and 32x32 painting helper.</Description>
+    <Copyright>Copyright (c) 2026 akivilii</Copyright>
+    <RepositoryUrl>https://github.com/akivilii/drawingHelper</RepositoryUrl>
   </PropertyGroup>
 
   <ItemGroup>

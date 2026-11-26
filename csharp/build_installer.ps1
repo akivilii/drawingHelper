@@ -30,5 +30,8 @@ dotnet publish $SetupProj -c Release -r win-x64 --self-contained false `
 
 $SetupExe = Join-Path $OutDir "DrawingHelperSetup.exe"
 $Info = Get-Item $SetupExe
+$Hash = (Get-FileHash -Algorithm SHA256 $SetupExe).Hash
+"$Hash  DrawingHelperSetup.exe" | Out-File -FilePath (Join-Path $OutDir "SHA256SUMS.txt") -Encoding ascii
 Write-Host ""
 Write-Host "SUCCESS: $SetupExe ($([math]::Round($Info.Length / 1KB, 1)) KB)"
+Write-Host "SHA-256: $Hash"

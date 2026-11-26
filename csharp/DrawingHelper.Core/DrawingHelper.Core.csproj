@@ -5,5 +5,14 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <Optimize>true</Optimize>
+    <Version>1.0.1</Version>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
+    <Product>DrawingHelper</Product>
+    <Company>akivilii</Company>
+    <Authors>akivilii</Authors>
+    <Description>Perceptual CIEDE2000 color matching engine for Minecraft item palettes.</Description>
+    <Copyright>Copyright (c) 2026 akivilii</Copyright>
+    <RepositoryUrl>https://github.com/akivilii/drawingHelper</RepositoryUrl>
   </PropertyGroup>
 </Project>

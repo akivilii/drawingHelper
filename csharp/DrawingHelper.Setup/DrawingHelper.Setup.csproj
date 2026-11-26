@@ -9,6 +9,15 @@
     <ApplicationIcon>..\DrawingHelper.App\Assets\app_icon.ico</ApplicationIcon>
     <Optimize>true</Optimize>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <Version>1.0.1</Version>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
+    <Product>DrawingHelper Installer</Product>
+    <Company>akivilii</Company>
+    <Authors>akivilii</Authors>
+    <Description>Windows Installer for Minecraft DrawingHelper.</Description>
+    <Copyright>Copyright (c) 2026 akivilii</Copyright>
+    <RepositoryUrl>https://github.com/akivilii/drawingHelper</RepositoryUrl>
   </PropertyGroup>
 
   <ItemGroup>
