@@ -14,6 +14,15 @@ public enum HighlightOutlineColor
     Cyan
 }
 
+public enum CanvasToolMode
+{
+    Select,
+    Hand,
+    Eyedropper,
+    Pencil,
+    CheckDone
+}
+
 /// <summary>
 /// High-performance NearestNeighbor WPF pixel canvas with smooth Zoom (MouseWheel / Ctrl+Plus/Minus/0)
 /// and Pan (Middle-drag / Shift+Left-drag / Right-drag when zoomed), modern dark styling,
@@ -33,7 +42,11 @@ public sealed class PixelTileCanvas : FrameworkElement
     private static readonly SolidColorBrush HeaderHotTextBrush = Freeze(new SolidColorBrush(Colors.White));
     private static readonly Pen HeaderBorderPen = Freeze(new Pen(new SolidColorBrush(Color.FromRgb(0x19, 0x19, 0x19)), 1.0));
     private static readonly Pen TileBorderPen = Freeze(new Pen(new SolidColorBrush(Color.FromRgb(0xF5, 0x9E, 0x0B)), 1.5));
-    private static readonly Pen ActiveTilePen = Freeze(new Pen(new SolidColorBrush(Color.FromRgb(0x26, 0x80, 0xEB)), 2.5));
+    private static readonly Pen MinimapGridPen = Freeze(new Pen(new SolidColorBrush(Color.FromArgb(120, 0xF5, 0x9E, 0x0B)), 1.0));
+    private static readonly Pen ActiveTilePen = Freeze(new Pen(new SolidColorBrush(Color.FromRgb(0x26, 0x80, 0xEB)), 2.0));
+    private static readonly SolidColorBrush ActiveTileFillBrush = Freeze(new SolidColorBrush(Color.FromArgb(55, 0x26, 0x80, 0xEB)));
+    private static readonly Pen HoverTilePen = Freeze(new Pen(new SolidColorBrush(Color.FromArgb(200, 0xFF, 0xFF, 0xFF)), 1.5));
+    private static readonly SolidColorBrush DoneTileTintBrush = Freeze(new SolidColorBrush(Color.FromArgb(75, 0x4A, 0xDE, 0x80)));
     private static readonly Pen CrosshairLinePen = Freeze(CreateDashPen(Color.FromArgb(190, 0x3B, 0x90, 0xF5)));
     private static readonly Pen HoverCellPen = Freeze(new Pen(Brushes.White, 2.0));
     private static readonly Pen HoverCellOuterPen = Freeze(new Pen(Brushes.Black, 1.0));
@@ -57,6 +70,7 @@ public sealed class PixelTileCanvas : FrameworkElement
     // Current rendering inputs
     private ConversionResult? _result;
     private bool _isOverviewMode;
+    private bool _isCompactMinimap;
     private (int Col, int Row) _selectedTile = (0, 0);
     private int? _highlightedPaletteIdx;
     private string? _highlightedItemName;
@@ -72,10 +86,12 @@ public sealed class PixelTileCanvas : FrameworkElement
     private double _panX;
     private double _panY;
     private bool _isPanning;
+    private bool _isDrawingStroke;
     private bool _panMoved;
     private bool _panStartedByRightButton;
     private Point _panLastPt;
     private Point _panStartPt;
+    private CanvasToolMode _toolMode = CanvasToolMode.Select;
 
     // Cached pixel bitmap
     private WriteableBitmap? _cachedBitmap;
@@ -88,13 +104,41 @@ public sealed class PixelTileCanvas : FrameworkElement
     private Rect _viewportRect = Rect.Empty;
     private Rect _cornerRect = Rect.Empty;
     private (int Lx, int Ly)? _hoverPixel;
+    private (int Col, int Row)? _hoverOverviewTile;
+    private bool _isScrubbingMinimap;
 
     public event Action<int, int, int, int>? PixelHovered;
     public event Action? HoverLeft;
     public event Action<int, int, int, int>? PixelClicked;
+    public event Action<int, int, int, int>? PixelPainted;
+    public event Action<int, int, int, int>? PixelPicked;
+    public event Action<int, int, int, int>? PixelToggleDoneRequested;
     public event Action<int, int>? TileClicked;
+    public event Action<int, int>? OverviewTileHovered;
+    public event Action? OverviewHoverLeft;
     public event Action? ClearHighlightRequested;
     public event Action<double>? ZoomChanged;
+
+    public bool IsCompactMinimap
+    {
+        get => _isCompactMinimap;
+        set { _isCompactMinimap = value; InvalidateVisual(); }
+    }
+
+    public CanvasToolMode ToolMode
+    {
+        get => _toolMode;
+        set
+        {
+            _toolMode = value;
+            Cursor = value switch
+            {
+                CanvasToolMode.Hand => Cursors.Hand,
+                CanvasToolMode.Pencil or CanvasToolMode.Eyedropper => Cursors.Cross,
+                _ => Cursors.Arrow
+            };
+        }
+    }
 
     public PixelTileCanvas()
     {
@@ -273,16 +317,17 @@ public sealed class PixelTileCanvas : FrameworkElement
 
     private static WriteableBitmap BuildBitmap(Rgb24[] pixels, int w, int h)
     {
-        var wb = new WriteableBitmap(w, h, 96, 96, PixelFormats.Bgr24, null);
-        var buf = new byte[w * h * 3];
+        var wb = new WriteableBitmap(w, h, 96, 96, PixelFormats.Bgra32, null);
+        var buf = new byte[w * h * 4];
         for (int i = 0; i < pixels.Length; i++)
         {
-            int o = i * 3;
+            int o = i * 4;
             buf[o] = pixels[i].B;
             buf[o + 1] = pixels[i].G;
             buf[o + 2] = pixels[i].R;
+            buf[o + 3] = 255;
         }
-        wb.WritePixels(new Int32Rect(0, 0, w, h), buf, w * 3, 0);
+        wb.WritePixels(new Int32Rect(0, 0, w, h), buf, w * 4, 0);
         wb.Freeze();
         return wb;
     }
@@ -310,65 +355,104 @@ public sealed class PixelTileCanvas : FrameworkElement
 
     private void RenderOverview(DrawingContext dc, double aw, double ah)
     {
-        const double pad = 8;
+        double pad = _isCompactMinimap ? 4 : 8;
         _viewportRect = new Rect(0, 0, aw, ah);
         _cornerRect = Rect.Empty;
 
         double baseScale = Math.Min((aw - pad * 2) / _srcW, (ah - pad * 2) / _srcH);
-        double scale = baseScale * _zoom;
+        double scale = baseScale * (_isCompactMinimap ? 1.0 : _zoom);
         double dw = Math.Max(1, _srcW * scale);
         double dh = Math.Max(1, _srcH * scale);
 
-        ClampPan(dw, dh, aw, ah);
+        if (!_isCompactMinimap)
+            ClampPan(dw, dh, aw, ah);
 
-        double x0 = Math.Floor((aw - dw) * 0.5 + _panX);
-        double y0 = Math.Floor((ah - dh) * 0.5 + _panY);
+        double x0 = (aw - dw) * 0.5 + (_isCompactMinimap ? 0 : _panX);
+        double y0 = (ah - dh) * 0.5 + (_isCompactMinimap ? 0 : _panY);
         _drawRect = new Rect(x0, y0, dw, dh);
 
+        dc.PushClip(new RectangleGeometry(_viewportRect));
         dc.DrawImage(_cachedBitmap!, _drawRect);
         dc.DrawRectangle(null, HeaderBorderPen, _drawRect);
 
-        if (!_showGrid || _result is null) return;
+        if (_showGrid && _result is not null)
+        {
+            var (cols, rows) = _result.TileGridShape(TileSize);
 
-        var (cols, rows) = _result.TileGridShape(TileSize);
-        for (int gx = TileSize; gx < _srcW; gx += TileSize)
-        {
-            double lx = x0 + gx * dw / _srcW;
-            dc.DrawLine(TileBorderPen, new Point(lx, y0), new Point(lx, y0 + dh));
-        }
-        for (int gy = TileSize; gy < _srcH; gy += TileSize)
-        {
-            double ly = y0 + gy * dh / _srcH;
-            dc.DrawLine(TileBorderPen, new Point(x0, ly), new Point(x0 + dw, ly));
-        }
-
-        double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        for (int tr = 0; tr < rows; tr++)
-        {
-            for (int tc = 0; tc < cols; tc++)
+            // Tint completed tiles cleanly inside their exact bounds
+            foreach (var (tc, tr) in _completedTiles)
             {
-                bool done = _completedTiles.Contains((tc, tr));
-                double bx = x0 + (tc * TileSize) * dw / _srcW + 3;
-                double by = y0 + (tr * TileSize) * dh / _srcH + 3;
-                string label = done ? $"{tc + 1},{tr + 1}✓" : $"{tc + 1},{tr + 1}";
-                var ft = new FormattedText(
-                    label, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                    HeaderBoldTypeface, 10, done ? BadgeDoneBrush : BadgeNormalBrush, dpi);
-                var rect = new Rect(bx, by, ft.Width + 6, ft.Height + 2);
-                dc.DrawRectangle(BadgeBgBrush, done ? new Pen(BadgeDoneBrush, 1) : new Pen(BadgeNormalBrush, 1), rect);
-                dc.DrawText(ft, new Point(bx + 3, by + 1));
+                if (tc < 0 || tc >= cols || tr < 0 || tr >= rows) continue;
+                var (_, b) = _result.SliceTile(tc, tr, TileSize);
+                dc.DrawRectangle(DoneTileTintBrush, null, new Rect(
+                    x0 + b.X0 * dw / _srcW,
+                    y0 + b.Y0 * dh / _srcH,
+                    b.Width * dw / _srcW,
+                    b.Height * dh / _srcH));
+            }
+
+            Pen gridPen = _isCompactMinimap ? MinimapGridPen : TileBorderPen;
+            dc.DrawRectangle(null, gridPen, _drawRect);
+            for (int gx = TileSize; gx < _srcW; gx += TileSize)
+            {
+                double lx = x0 + gx * dw / _srcW;
+                dc.DrawLine(gridPen, new Point(lx, y0), new Point(lx, y0 + dh));
+            }
+            for (int gy = TileSize; gy < _srcH; gy += TileSize)
+            {
+                double ly = y0 + gy * dh / _srcH;
+                dc.DrawLine(gridPen, new Point(x0, ly), new Point(x0 + dw, ly));
+            }
+
+            // Only draw text badges on main overview when each tile is wide enough to fit without overflowing!
+            double sampleTileW = TileSize * dw / _srcW;
+            double sampleTileH = TileSize * dh / _srcH;
+            if (!_isCompactMinimap && sampleTileW >= 42 && sampleTileH >= 22)
+            {
+                double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+                for (int tr = 0; tr < rows; tr++)
+                {
+                    for (int tc = 0; tc < cols; tc++)
+                    {
+                        bool done = _completedTiles.Contains((tc, tr));
+                        double bx = x0 + (tc * TileSize) * dw / _srcW + 3;
+                        double by = y0 + (tr * TileSize) * dh / _srcH + 3;
+                        string label = done ? $"{tc + 1},{tr + 1}✓" : $"{tc + 1},{tr + 1}";
+                        var ft = new FormattedText(
+                            label, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                            HeaderBoldTypeface, 9.5, done ? BadgeDoneBrush : BadgeNormalBrush, dpi);
+                        var rect = new Rect(bx, by, ft.Width + 5, ft.Height + 2);
+                        dc.DrawRectangle(BadgeBgBrush, null, rect);
+                        dc.DrawText(ft, new Point(bx + 2.5, by + 1));
+                    }
+                }
+            }
+
+            // Hover tile frame
+            if (_hoverOverviewTile is { Col: var hc, Row: var hr } && hc < cols && hr < rows &&
+                (hc, hr) != _selectedTile)
+            {
+                var (_, hb) = _result.SliceTile(hc, hr, TileSize);
+                dc.DrawRectangle(null, HoverTilePen, new Rect(
+                    x0 + hb.X0 * dw / _srcW,
+                    y0 + hb.Y0 * dh / _srcH,
+                    hb.Width * dw / _srcW,
+                    hb.Height * dh / _srcH));
+            }
+
+            // Active selected tile highlight (exact pixel-aligned bounds!)
+            if (_selectedTile.Col < cols && _selectedTile.Row < rows)
+            {
+                var (_, b) = _result.SliceTile(_selectedTile.Col, _selectedTile.Row, TileSize);
+                var activeRect = new Rect(
+                    x0 + b.X0 * dw / _srcW,
+                    y0 + b.Y0 * dh / _srcH,
+                    b.Width * dw / _srcW,
+                    b.Height * dh / _srcH);
+                dc.DrawRectangle(ActiveTileFillBrush, ActiveTilePen, activeRect);
             }
         }
-
-        if (_selectedTile.Col < cols && _selectedTile.Row < rows)
-        {
-            var (_, b) = _result.SliceTile(_selectedTile.Col, _selectedTile.Row, TileSize);
-            dc.DrawRectangle(null, ActiveTilePen, new Rect(
-                x0 + b.X0 * dw / _srcW,
-                y0 + b.Y0 * dh / _srcH,
-                b.Width * dw / _srcW,
-                b.Height * dh / _srcH));
-        }
+        dc.Pop();
     }
 
     private void RenderPaintSheet(DrawingContext dc, double aw, double ah)
@@ -559,7 +643,7 @@ public sealed class PixelTileCanvas : FrameworkElement
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
         base.OnMouseWheel(e);
-        if (_result is null) return;
+        if (_result is null || _isCompactMinimap) return;
         double factor = e.Delta > 0 ? 1.22 : (1.0 / 1.22);
         ZoomBy(factor, e.GetPosition(this));
         e.Handled = true;
@@ -570,9 +654,21 @@ public sealed class PixelTileCanvas : FrameworkElement
         base.OnMouseDown(e);
         Point pt = e.GetPosition(this);
 
-        // Middle-drag or Shift+Left-drag or Right-drag (when zoomed) pans
+        if (_isCompactMinimap)
+        {
+            if (e.ChangedButton == MouseButton.Left && HitTestPixel(pt) is { Lx: var mlx, Ly: var mly })
+            {
+                _isScrubbingMinimap = true;
+                CaptureMouse();
+                TileClicked?.Invoke(mlx / TileSize, mly / TileSize);
+                e.Handled = true;
+            }
+            return;
+        }
+
+        // Hand tool, Middle-drag, Shift+Left-drag, or Right-drag (when zoomed) pans
         if (e.ChangedButton == MouseButton.Middle ||
-            (e.ChangedButton == MouseButton.Left && Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) ||
+            (e.ChangedButton == MouseButton.Left && (_toolMode == CanvasToolMode.Hand || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))) ||
             (e.ChangedButton == MouseButton.Right && _zoom > 1.001))
         {
             _isPanning = true;
@@ -597,9 +693,32 @@ public sealed class PixelTileCanvas : FrameworkElement
             if (hit is not { Lx: var lx, Ly: var ly }) return;
 
             if (_isOverviewMode)
+            {
                 TileClicked?.Invoke(lx / TileSize, ly / TileSize);
-            else
-                PixelClicked?.Invoke(lx, ly, _srcX0 + lx, _srcY0 + ly);
+                return;
+            }
+
+            // Alt+Click always acts as instant Eyedropper (just like Photoshop)
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt) || _toolMode == CanvasToolMode.Eyedropper)
+            {
+                PixelPicked?.Invoke(lx, ly, _srcX0 + lx, _srcY0 + ly);
+                return;
+            }
+
+            switch (_toolMode)
+            {
+                case CanvasToolMode.Pencil:
+                    _isDrawingStroke = true;
+                    CaptureMouse();
+                    PixelPainted?.Invoke(lx, ly, _srcX0 + lx, _srcY0 + ly);
+                    break;
+                case CanvasToolMode.CheckDone:
+                    PixelToggleDoneRequested?.Invoke(lx, ly, _srcX0 + lx, _srcY0 + ly);
+                    break;
+                default:
+                    PixelClicked?.Invoke(lx, ly, _srcX0 + lx, _srcY0 + ly);
+                    break;
+            }
         }
         else if (e.ChangedButton == MouseButton.Right && !_isOverviewMode)
         {
@@ -623,29 +742,72 @@ public sealed class PixelTileCanvas : FrameworkElement
             return;
         }
 
-        if (_isOverviewMode) return;
+        if (_isScrubbingMinimap)
+        {
+            if (HitTestPixel(pt) is { Lx: var slx, Ly: var sly })
+            {
+                var tile = (slx / TileSize, sly / TileSize);
+                if (tile != _selectedTile)
+                    TileClicked?.Invoke(tile.Item1, tile.Item2);
+            }
+            return;
+        }
+
+        if (_isOverviewMode)
+        {
+            var ovHit = HitTestPixel(pt);
+            (int Col, int Row)? newTile = ovHit is { Lx: var olx, Ly: var oly }
+                ? (olx / TileSize, oly / TileSize)
+                : null;
+            if (newTile != _hoverOverviewTile)
+            {
+                _hoverOverviewTile = newTile;
+                InvalidateVisual();
+                if (newTile is { Col: var tc, Row: var tr })
+                    OverviewTileHovered?.Invoke(tc, tr);
+                else
+                    OverviewHoverLeft?.Invoke();
+            }
+            return;
+        }
         var hit = HitTestPixel(pt);
         if (hit != _hoverPixel)
         {
             _hoverPixel = hit;
             InvalidateVisual();
             if (hit is { Lx: var lx, Ly: var ly })
+            {
                 PixelHovered?.Invoke(lx, ly, _srcX0 + lx, _srcY0 + ly);
+                if (_isDrawingStroke && e.LeftButton == MouseButtonState.Pressed)
+                    PixelPainted?.Invoke(lx, ly, _srcX0 + lx, _srcY0 + ly);
+            }
             else
+            {
                 HoverLeft?.Invoke();
+            }
         }
     }
 
     protected override void OnMouseUp(MouseButtonEventArgs e)
     {
         base.OnMouseUp(e);
+        if (_isScrubbingMinimap)
+        {
+            _isScrubbingMinimap = false;
+            ReleaseMouseCapture();
+        }
+        if (_isDrawingStroke)
+        {
+            _isDrawingStroke = false;
+            ReleaseMouseCapture();
+        }
         if (_isPanning)
         {
             bool wasRightClickWithoutDrag = _panStartedByRightButton && !_panMoved;
             _isPanning = false;
             _panStartedByRightButton = false;
             ReleaseMouseCapture();
-            Cursor = Cursors.Arrow;
+            Cursor = _toolMode == CanvasToolMode.Hand ? Cursors.Hand : Cursors.Arrow;
 
             if (wasRightClickWithoutDrag && !_isOverviewMode)
                 ClearHighlightRequested?.Invoke();
@@ -655,6 +817,12 @@ public sealed class PixelTileCanvas : FrameworkElement
     protected override void OnMouseLeave(MouseEventArgs e)
     {
         base.OnMouseLeave(e);
+        if (_hoverOverviewTile is not null)
+        {
+            _hoverOverviewTile = null;
+            InvalidateVisual();
+            OverviewHoverLeft?.Invoke();
+        }
         if (!_isPanning && _hoverPixel is not null)
         {
             _hoverPixel = null;

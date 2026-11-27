@@ -13,7 +13,8 @@ public sealed record ConversionOptions(
     double DitherStrength = 1.0,
     double KL = 1.0,
     double KC = 1.0,
-    double KH = 1.0);
+    double KH = 1.0,
+    CropRect? Crop = null);
 
 public readonly record struct ColorUsage(PaletteColor Color, int Count);
 
@@ -155,6 +156,24 @@ public sealed class ConversionResult
         }
         return set.Count;
     }
+
+    /// <summary>Mutates a single pixel to a new palette index and returns the previous index.</summary>
+    public int SetPixel(int x, int y, int newPaletteIndex)
+    {
+        if (x < 0 || x >= Width || y < 0 || y >= Height)
+            return -1;
+        if (newPaletteIndex < 0 || newPaletteIndex >= Palette.Count)
+            return -1;
+
+        int offset = y * Width + x;
+        int prev = PaletteIndices[offset];
+        if (prev == newPaletteIndex)
+            return prev;
+
+        PaletteIndices[offset] = newPaletteIndex;
+        PixelRgb[offset] = Palette[newPaletteIndex].Rgb;
+        return prev;
+    }
 }
 
 public static class ImageConverterEngine
@@ -174,7 +193,8 @@ public static class ImageConverterEngine
             options.Width,
             options.Height,
             options.ResizeMode,
-            options.ResampleMode);
+            options.ResampleMode,
+            options.Crop);
 
         var matcher = new ColorMatcher(palette, options.Metric, options.KL, options.KC, options.KH);
         var (indices, dists) = matcher.MatchImage(

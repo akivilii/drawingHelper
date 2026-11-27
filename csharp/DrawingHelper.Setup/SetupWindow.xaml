@@ -19,7 +19,7 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="DrawingHelper v1.0.1" FontSize="11"
+                <TextBlock Grid.Column="0" Text="DrawingHelper v1.0.2" FontSize="11"
                            Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button x:Name="BtnBack" Content="&lt; 이전" Click="OnBackClick" Margin="0,0,6,0" Visibility="Collapsed"/>

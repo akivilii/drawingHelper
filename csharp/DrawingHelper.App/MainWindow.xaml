@@ -4,8 +4,8 @@
         xmlns:controls="clr-namespace:DrawingHelper.App.Controls"
         Title="DrawingHelper"
         Icon="pack://application:,,,/Assets/app_icon.ico"
-        Width="1120" Height="740"
-        MinWidth="420" MinHeight="520"
+        Width="1160" Height="750"
+        MinWidth="430" MinHeight="540"
         WindowStyle="None"
         AllowsTransparency="False"
         Topmost="{Binding IsTopmost, Mode=TwoWay}"
@@ -22,6 +22,8 @@
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
         <Style x:Key="CaptionBtn" TargetType="{x:Type Button}">
             <Setter Property="Width" Value="40"/>
             <Setter Property="Height" Value="32"/>
@@ -104,7 +106,7 @@
 
     <Border x:Name="RootFrame" BorderBrush="{StaticResource StudioDividerBrush}" BorderThickness="1">
     <DockPanel LastChildFill="True">
-        <!-- 1. Antigravity / VS Code Style Integrated Dark Title + Menu + Status Pill Bar -->
+        <!-- 1. Antigravity / VS Code Style Integrated Dark Title Bar -->
         <Grid x:Name="TitleBarGrid" DockPanel.Dock="Top" Height="32" Background="{StaticResource StudioChromeBrush}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
@@ -131,6 +133,13 @@
                     <Separator/>
                     <MenuItem Header="종료" Click="OnExitClick"/>
                 </MenuItem>
+                <MenuItem Header="편집">
+                    <MenuItem Header="되돌리기 (Ctrl + Z)" Click="OnUndoClick" IsEnabled="{Binding CanUndo}"/>
+                    <Separator/>
+                    <MenuItem Header="시계방향 90° 회전 (R)" Click="OnRotate90Click" IsEnabled="{Binding HasSource}"/>
+                    <MenuItem Header="좌우 반전" Click="OnFlipHClick" IsEnabled="{Binding HasSource}"/>
+                    <MenuItem Header="자르기 (C)" Click="OnCropMenuClick" IsEnabled="{Binding HasSource}"/>
+                </MenuItem>
                 <MenuItem Header="보기">
                     <MenuItem Header="전체 보기" Click="OnModeOverviewClick"/>
                     <MenuItem Header="32×32 보기" Click="OnModeTileClick" IsEnabled="{Binding HasResult}"/>
@@ -152,7 +161,7 @@
                 </MenuItem>
             </Menu>
 
-            <!-- Antigravity / VS Code style centered workspace pill (click to open image) -->
+            <!-- Centered Workspace Pill -->
             <Button Grid.Column="2" Click="OnOpenImageClick"
                     HorizontalAlignment="Center" VerticalAlignment="Center"
                     MinWidth="210" MaxWidth="360" Height="22" Padding="14,0"
@@ -175,7 +184,7 @@
                            Foreground="{StaticResource StudioTextMutedBrush}" TextTrimming="CharacterEllipsis"/>
             </Button>
 
-            <!-- Top-right quick layout toggles (VS Code / Antigravity style) -->
+            <!-- Top-right quick layout toggles -->
             <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0">
                 <ToggleButton Style="{StaticResource TitleIconToggle}" IsChecked="{Binding IsTopmost, Mode=TwoWay}" ToolTip="항상 위">
                     <Path Data="M 4,2 H 10 L 9,6 L 11,8 H 3 L 5,6 Z M 7,8 V 13"
@@ -190,7 +199,7 @@
                 </ToggleButton>
             </StackPanel>
 
-            <!-- Custom Dark Caption Buttons -->
+            <!-- Caption Buttons -->
             <StackPanel Grid.Column="4" Orientation="Horizontal">
                 <Button Style="{StaticResource CaptionBtn}" Click="OnToggleFullscreenClick" ToolTip="전체화면 (F11)">
                     <Path Data="M 2,5 V 2 H 5 M 9,2 H 12 V 5 M 12,9 V 12 H 9 M 5,12 H 2 V 9"
@@ -214,52 +223,101 @@
             <Border Grid.ColumnSpan="5" VerticalAlignment="Bottom" Height="1" Background="{StaticResource StudioDividerBrush}"/>
         </Grid>
 
-        <!-- 2. Photoshop / Affinity Context Options Bar (single compact strip) -->
+        <!-- 2. Photoshop / Affinity Context Options Bar -->
         <Border DockPanel.Dock="Top" Background="{StaticResource StudioPanelBrush}"
                 BorderBrush="{StaticResource StudioDividerBrush}" BorderThickness="0,0,0,1" Padding="6,4">
-            <WrapPanel VerticalAlignment="Center">
-                <!-- Convert controls -->
-                <Button Content="열기" Click="OnOpenImageClick" Margin="0,0,5,0"/>
-                <TextBox Text="{Binding WidthText, UpdateSourceTrigger=PropertyChanged}" Width="40" ToolTip="너비(px)"/>
-                <TextBlock Text="×" VerticalAlignment="Center" Margin="3,0" Foreground="{StaticResource StudioTextMutedBrush}"/>
-                <TextBox Text="{Binding HeightText, UpdateSourceTrigger=PropertyChanged}" Width="40" Margin="0,0,5,0" ToolTip="높이(px)"/>
+            <Grid>
+                <!-- Normal Workspace Options -->
+                <WrapPanel x:Name="NormalOptionsBar" VerticalAlignment="Center">
+                    <Button Content="열기" Click="OnOpenImageClick" Margin="0,0,6,0"/>
 
-                <ComboBox ItemsSource="{Binding ResizeModes}" SelectedItem="{Binding SelectedResizeMode}" Width="64" Margin="0,0,4,0" ToolTip="비율"/>
-                <ComboBox ItemsSource="{Binding Metrics}" SelectedItem="{Binding SelectedMetric}" Width="88" Margin="0,0,4,0" ToolTip="알고리즘"/>
-                <ComboBox ItemsSource="{Binding DitherModes}" SelectedItem="{Binding SelectedDither}" Width="96" Margin="0,0,5,0" ToolTip="디더링"/>
-                <Button Content="변환" Style="{StaticResource StudioAccentButton}" Click="OnConvertClick" IsEnabled="{Binding HasSource}"/>
+                    <!-- Dual Sizing Priority Switch: 사진 기준 (Image->Grid) vs 칸 고정 (Grid->Image) -->
+                    <RadioButton x:Name="RbImageFirst" Content="사진기준" GroupName="SizingPriority"
+                                 Style="{StaticResource StudioModeToggle}"
+                                 IsChecked="{Binding IsImageFirstMode, Mode=TwoWay}"
+                                 Margin="0,0,2,0" ToolTip="사진 비율에 맞춰 그리드(W×H) 칸 수가 자동 조정됩니다"/>
+                    <RadioButton x:Name="RbGridFirst" Content="칸고정" GroupName="SizingPriority"
+                                 Style="{StaticResource StudioModeToggle}"
+                                 Checked="OnGridFirstChecked"
+                                 Margin="0,0,6,0" ToolTip="원하는 칸 수(W×H)를 고정하고 사진을 그 안에 맞춥니다"/>
 
-                <Border Style="{StaticResource StudioBarSep}"/>
+                    <!-- W x H Tile Selectors (mouse-wheel + bottom custom input supported) -->
+                    <ComboBox x:Name="CmbWidthTiles" ItemsSource="{Binding GridCountOptions}"
+                              SelectedItem="{Binding SelectedWidthTiles, Mode=TwoWay}"
+                              Width="86" PreviewMouseWheel="CmbWidthTiles_PreviewMouseWheel"
+                              ToolTip="가로 칸 수 (휠 스크롤 또는 하단 직접 입력)"/>
+                    <TextBlock Text="×" VerticalAlignment="Center" Margin="3,0" Foreground="{StaticResource StudioTextMutedBrush}"/>
+                    <ComboBox x:Name="CmbHeightTiles" ItemsSource="{Binding GridCountOptions}"
+                              SelectedItem="{Binding SelectedHeightTiles, Mode=TwoWay}"
+                              Width="86" Margin="0,0,4,0" PreviewMouseWheel="CmbHeightTiles_PreviewMouseWheel"
+                              ToolTip="세로 칸 수 (휠 스크롤 또는 하단 직접 입력)"/>
 
-                <!-- View mode segmented switch -->
-                <RadioButton x:Name="RbViewOverview" Content="전체" GroupName="CanvasViewMode"
-                             Style="{StaticResource StudioModeToggle}" IsChecked="True" Checked="OnCanvasViewModeChanged" Margin="0,0,2,0"/>
-                <RadioButton x:Name="RbViewTile" Content="32×32" GroupName="CanvasViewMode"
-                             Style="{StaticResource StudioModeToggle}" Checked="OnCanvasViewModeChanged" IsEnabled="{Binding HasResult}" Margin="0,0,6,0"/>
+                    <!-- Shown ONLY in 칸고정 (GridFirst) mode: 채우기 / 여백 / 늘림 -->
+                    <ComboBox ItemsSource="{Binding GridFitOptions}" SelectedItem="{Binding SelectedGridFit, Mode=TwoWay}"
+                              Visibility="{Binding IsGridFirstMode, Converter={StaticResource BoolToVis}}"
+                              Width="64" Margin="0,0,4,0" ToolTip="칸 고정 시 사진 맞춤 방식"/>
 
-                <!-- Tile stepper -->
-                <Button Content="◀" Click="OnPrevTileClick" IsEnabled="{Binding HasResult}" Width="22" Padding="0"/>
-                <ComboBox ItemsSource="{Binding TileChoices}" SelectedItem="{Binding SelectedTileChoice, Mode=TwoWay}"
-                          DisplayMemberPath="Label" IsEnabled="{Binding HasResult}" Width="78" Margin="3,0"/>
-                <Button Content="▶" Click="OnNextTileClick" IsEnabled="{Binding HasResult}" Width="22" Padding="0" Margin="0,0,6,0"/>
-                <CheckBox Content="완료" IsChecked="{Binding IsCurrentTileDone, Mode=TwoWay}" IsEnabled="{Binding HasResult}" Margin="0,0,4,0"/>
+                    <ComboBox ItemsSource="{Binding Metrics}" SelectedItem="{Binding SelectedMetric}" Width="86" Margin="0,0,4,0" ToolTip="색상 매칭 알고리즘"/>
+                    <ComboBox ItemsSource="{Binding DitherModes}" SelectedItem="{Binding SelectedDither}" Width="94" Margin="0,0,5,0" ToolTip="디더링"/>
+                    <Button Content="변환" Style="{StaticResource StudioAccentButton}" Click="OnConvertClick" IsEnabled="{Binding HasSource}"/>
 
-                <Border Style="{StaticResource StudioBarSep}"/>
+                    <Border Style="{StaticResource StudioBarSep}"/>
 
-                <!-- Highlight & Zoom -->
-                <RadioButton x:Name="RbScopeShade" Content="단계" GroupName="HlScope"
-                             Style="{StaticResource StudioModeToggle}" IsChecked="True" Checked="OnScopeRadioChanged" Margin="0,0,2,0"/>
-                <RadioButton x:Name="RbScopeItem" Content="아이템" GroupName="HlScope"
-                             Style="{StaticResource StudioModeToggle}" Checked="OnScopeRadioChanged" Margin="0,0,4,0"/>
-                <ComboBox ItemsSource="{Binding OutlineColors}" SelectedItem="{Binding HighlightOutlineColor}" Width="66" Margin="0,0,6,0" ToolTip="외곽선 색"/>
+                    <!-- View mode switch -->
+                    <RadioButton x:Name="RbViewOverview" Content="전체" GroupName="CanvasViewMode"
+                                 Style="{StaticResource StudioModeToggle}" IsChecked="True" Checked="OnCanvasViewModeChanged" Margin="0,0,2,0"/>
+                    <RadioButton x:Name="RbViewTile" Content="32×32" GroupName="CanvasViewMode"
+                                 Style="{StaticResource StudioModeToggle}" Checked="OnCanvasViewModeChanged" IsEnabled="{Binding HasResult}" Margin="0,0,5,0"/>
 
-                <Button Content="−" Click="OnZoomOutClick" Width="22" Padding="0" ToolTip="축소 (Ctrl + -)"/>
-                <Button x:Name="BtnZoomReset" Content="100%" Click="OnZoomResetClick" MinWidth="44" Margin="2,0" Padding="4,1" ToolTip="100% (Ctrl + 0)"/>
-                <Button Content="+" Click="OnZoomInClick" Width="22" Padding="0" ToolTip="확대 (Ctrl + +)"/>
-            </WrapPanel>
+                    <Button Content="◀" Click="OnPrevTileClick" IsEnabled="{Binding HasResult}" Width="22" Padding="0"/>
+                    <ComboBox ItemsSource="{Binding TileChoices}" SelectedItem="{Binding SelectedTileChoice, Mode=TwoWay}"
+                              IsEnabled="{Binding HasResult}" Width="76" Margin="3,0"/>
+                    <Button Content="▶" Click="OnNextTileClick" IsEnabled="{Binding HasResult}" Width="22" Padding="0" Margin="0,0,5,0"/>
+                    <CheckBox Content="완료" IsChecked="{Binding IsCurrentTileDone, Mode=TwoWay}" IsEnabled="{Binding HasResult}" Margin="0,0,2,0"/>
+
+                    <Border Style="{StaticResource StudioBarSep}"/>
+
+                    <RadioButton x:Name="RbScopeShade" Content="단계" GroupName="HlScope"
+                                 Style="{StaticResource StudioModeToggle}" IsChecked="True" Checked="OnScopeRadioChanged" Margin="0,0,2,0"/>
+                    <RadioButton x:Name="RbScopeItem" Content="아이템" GroupName="HlScope"
+                                 Style="{StaticResource StudioModeToggle}" Checked="OnScopeRadioChanged" Margin="0,0,4,0"/>
+                    <ComboBox ItemsSource="{Binding OutlineColors}" SelectedItem="{Binding HighlightOutlineColor}" Width="64" Margin="0,0,6,0" ToolTip="외곽선 색"/>
+
+                    <Button Content="−" Click="OnZoomOutClick" Width="22" Padding="0" ToolTip="축소 (Ctrl + -)"/>
+                    <Button x:Name="BtnZoomReset" Content="100%" Click="OnZoomResetClick" MinWidth="44" Margin="2,0" Padding="4,1" ToolTip="100% (Ctrl + 0)"/>
+                    <Button Content="+" Click="OnZoomInClick" Width="22" Padding="0" ToolTip="확대 (Ctrl + +)"/>
+                </WrapPanel>
+
+                <!-- Contextual Crop Tool Bar (shown when Crop Tool is active) -->
+                <WrapPanel x:Name="CropOptionsBar" VerticalAlignment="Center" Visibility="Collapsed">
+                    <TextBlock Text="자르기" FontWeight="SemiBold" Foreground="{StaticResource StudioAccentHoverBrush}"
+                               VerticalAlignment="Center" Margin="2,0,8,0"/>
+                    <RadioButton Content="사진기준(자유)" GroupName="CropModeSwitch"
+                                 Style="{StaticResource StudioModeToggle}"
+                                 IsChecked="{Binding IsImageFirstMode, Mode=TwoWay}"
+                                 Checked="OnCropModeSwitchChanged" Margin="0,0,2,0"
+                                 ToolTip="자유롭게 자르면 자른 비율에 맞춰 그리드 칸 수가 자동 계산됩니다"/>
+                    <RadioButton x:Name="RbCropGridFixed" Content="칸고정(비율)" GroupName="CropModeSwitch"
+                                 Style="{StaticResource StudioModeToggle}"
+                                 Checked="OnCropModeSwitchChanged" Margin="0,0,8,0"
+                                 ToolTip="선택한 W×H 칸 비율로 자르기 틀이 고정됩니다"/>
+
+                    <ComboBox x:Name="CmbCropWidthTiles" ItemsSource="{Binding GridCountOptions}" SelectedItem="{Binding SelectedWidthTiles, Mode=TwoWay}"
+                              Width="86" PreviewMouseWheel="CmbWidthTiles_PreviewMouseWheel"/>
+                    <TextBlock Text="×" VerticalAlignment="Center" Margin="3,0" Foreground="{StaticResource StudioTextMutedBrush}"/>
+                    <ComboBox x:Name="CmbCropHeightTiles" ItemsSource="{Binding GridCountOptions}" SelectedItem="{Binding SelectedHeightTiles, Mode=TwoWay}"
+                              Width="86" Margin="0,0,8,0" PreviewMouseWheel="CmbHeightTiles_PreviewMouseWheel"/>
+
+                    <Border Style="{StaticResource StudioBarSep}"/>
+                    <Button Content="전체초기화" Click="OnResetCropCenterClick" Margin="0,0,4,0"/>
+                    <Button Content="자르기해제" Click="OnClearCropClick" Margin="0,0,8,0"/>
+                    <Button Content="적용 및 변환 (Enter)" Style="{StaticResource StudioAccentButton}" Click="OnApplyCropClick" Margin="0,0,4,0"/>
+                    <Button Content="취소 (Esc)" Click="OnCancelCropClick"/>
+                </WrapPanel>
+            </Grid>
         </Border>
 
-        <!-- 3. Ultra-thin Studio Status Bar -->
+        <!-- 3. Studio Status Bar -->
         <StatusBar DockPanel.Dock="Bottom" Height="22">
             <StatusBar.ItemsPanel>
                 <ItemsPanelTemplate>
@@ -284,101 +342,159 @@
             </StatusBarItem>
         </StatusBar>
 
-        <!-- 4. Main Studio Workspace: Left Tool Rail | Center Artboard | Right Docked Panels -->
+        <!-- 4. Main Studio Workspace: Expanded Left Tool Rail | Center Artboard | Right Panels -->
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="36"/>
+                <ColumnDefinition Width="38"/>
                 <ColumnDefinition Width="*" MinWidth="220"/>
                 <ColumnDefinition x:Name="RightSplitterCol" Width="3"/>
-                <ColumnDefinition x:Name="RightDockCol" Width="260" MinWidth="200" MaxWidth="420"/>
+                <ColumnDefinition x:Name="RightDockCol" Width="265" MinWidth="205" MaxWidth="420"/>
             </Grid.ColumnDefinitions>
 
-            <!-- LEFT: Vertical Tool Rail (Photoshop / Affinity Icon Strip) -->
+            <!-- LEFT: Full Studio Tool Rail (Photoshop / Affinity / Aseprite Tools) -->
             <Border Grid.Column="0" Background="{StaticResource StudioChromeBrush}"
-                    BorderBrush="{StaticResource StudioDividerBrush}" BorderThickness="0,0,1,0" Padding="3,6">
-                <StackPanel HorizontalAlignment="Center">
-                    <!-- Grid Toggle -->
-                    <ToggleButton Style="{StaticResource ToolRailToggle}" IsChecked="{Binding ShowPaintGrid}" ToolTip="격자">
-                        <Path Data="M 2,5 H 14 M 2,11 H 14 M 5,2 V 14 M 11,2 V 14"
-                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
-                              StrokeThickness="1.2" Width="16" Height="16"/>
-                    </ToggleButton>
-                    <!-- Crosshair Toggle -->
-                    <ToggleButton Style="{StaticResource ToolRailToggle}" IsChecked="{Binding ShowCrosshair}" ToolTip="십자선">
-                        <Path Data="M 8,1 V 6 M 8,10 V 15 M 1,8 H 6 M 10,8 H 15"
-                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
-                              StrokeThickness="1.3" Width="16" Height="16"/>
-                    </ToggleButton>
-                    <!-- Dim Completed Toggle -->
-                    <ToggleButton Style="{StaticResource ToolRailToggle}" IsChecked="{Binding DimCompleted}" ToolTip="완료색 흐림">
-                        <Path Data="M 8,2 A 6,6 0 1 0 8,14 Z"
-                              Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
-                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
-                              StrokeThickness="1.2" Width="16" Height="16"/>
-                    </ToggleButton>
-                    <!-- Clear Highlight -->
-                    <Button Style="{StaticResource ToolRailButton}" Click="OnClearHighlightClick" IsEnabled="{Binding HasResult}" ToolTip="강조 해제 (Esc)">
-                        <Path Data="M 4,4 L 12,12 M 12,4 L 4,12"
-                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                              StrokeThickness="1.4" Width="16" Height="16"/>
-                    </Button>
+                    BorderBrush="{StaticResource StudioDividerBrush}" BorderThickness="0,0,1,0" Padding="4,6">
+                <ScrollViewer VerticalScrollBarVisibility="Hidden">
+                    <StackPanel HorizontalAlignment="Center">
+                        <!-- 1. Select / Highlight Tool (V) -->
+                        <ToggleButton x:Name="BtnToolSelect" Style="{StaticResource ToolRailToggle}" IsChecked="True"
+                                      Click="OnStudioToolClick" ToolTip="선택 / 외곽선 강조 (V)">
+                            <Path Data="M 4,2 L 4,13 L 7,10 L 9.8,14 L 11.3,13 L 8.5,9 L 12.5,9 Z"
+                                  Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                  Width="16" Height="16"/>
+                        </ToggleButton>
 
-                    <Border Height="1" Background="{StaticResource StudioBorderBrush}" Margin="4,6"/>
+                        <!-- 2. Hand / Pan Tool (H) -->
+                        <ToggleButton x:Name="BtnToolHand" Style="{StaticResource ToolRailToggle}"
+                                      Click="OnStudioToolClick" ToolTip="손바닥 이동 툴 (H)">
+                            <Path Data="M 6,2 V 8 M 8.5,1.5 V 8 M 11,2.5 V 8 M 13,5 V 10 C 13,12.5 11,14 8.5,14 H 7 C 5,14 3.5,12.5 3.5,10.5 V 7.5 C 3.5,6.8 4.5,6.8 4.5,7.5 V 9"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                  StrokeThickness="1.3" Width="16" Height="16"/>
+                        </ToggleButton>
 
-                    <!-- Topmost Pin -->
-                    <ToggleButton Style="{StaticResource ToolRailToggle}" IsChecked="{Binding IsTopmost, Mode=TwoWay}" ToolTip="항상 위">
-                        <Path Data="M 5,3 H 11 L 10,7 L 12,9 H 4 L 6,7 Z M 8,9 V 14"
-                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
-                              StrokeThickness="1.2" Width="16" Height="16"/>
-                    </ToggleButton>
-                    <!-- Split View Size -->
-                    <ToggleButton x:Name="BtnSplitSize" Style="{StaticResource ToolRailToggle}" Click="OnToggleSplitSizeClick" ToolTip="스플릿 뷰 크기">
-                        <Path Data="M 2,3 H 14 V 13 H 2 Z M 8,3 V 13"
-                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
-                              StrokeThickness="1.2" Width="16" Height="16"/>
-                    </ToggleButton>
-                    <!-- Global Hotkeys -->
-                    <ToggleButton Style="{StaticResource ToolRailToggle}" IsChecked="{Binding IsGlobalHotkeysEnabled, Mode=TwoWay}"
-                                  Click="OnToggleGlobalHotkeysClick" ToolTip="전역 단축키 (Ctrl+Alt)">
-                        <Path Data="M 2,5 H 14 V 12 H 2 Z M 4,8 H 6 M 7,8 H 9 M 10,8 H 12 M 5,10 H 11"
-                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
-                              StrokeThickness="1.2" Width="16" Height="16"/>
-                    </ToggleButton>
-                    <!-- Toggle Right Dock -->
-                    <ToggleButton x:Name="BtnRightDock" Style="{StaticResource ToolRailToggle}" IsChecked="True"
-                                  Click="OnToggleRightDockClick" ToolTip="우측 패널">
-                        <Path Data="M 2,3 H 14 V 13 H 2 Z M 10,3 V 13"
-                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
-                              StrokeThickness="1.2" Width="16" Height="16"/>
-                    </ToggleButton>
-                </StackPanel>
+                        <!-- 3. Crop Tool (C) -->
+                        <ToggleButton x:Name="BtnToolCrop" Style="{StaticResource ToolRailToggle}"
+                                      Click="OnStudioToolClick" IsEnabled="{Binding HasSource}" ToolTip="자르기 툴 (C)">
+                            <Path Data="M 4,1 V 12 H 15 M 1,4 H 12 V 15"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                  StrokeThickness="1.5" Width="16" Height="16"/>
+                        </ToggleButton>
+
+                        <!-- 4. Eyedropper Tool (I / Alt+Click) -->
+                        <ToggleButton x:Name="BtnToolEyedropper" Style="{StaticResource ToolRailToggle}"
+                                      Click="OnStudioToolClick" IsEnabled="{Binding HasResult}" ToolTip="스포이드 / 브러시 색 추출 (I 또는 Alt+클릭)">
+                            <Path Data="M 11,2 L 14,5 L 12,7 L 9,4 Z M 8,5 L 11,8 L 5.5,13.5 H 2.5 V 10.5 Z"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                  StrokeThickness="1.2" Width="16" Height="16"/>
+                        </ToggleButton>
+
+                        <!-- 5. Pencil Pixel Edit Tool (P) -->
+                        <ToggleButton x:Name="BtnToolPencil" Style="{StaticResource ToolRailToggle}"
+                                      Click="OnStudioToolClick" IsEnabled="{Binding HasResult}" ToolTip="연필 도트 수동 보정 (P) — 선택한 색으로 픽셀 칠하기">
+                            <Path Data="M 11.5,2.5 L 13.5,4.5 L 5.5,12.5 L 2.5,13.5 L 3.5,10.5 Z"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                  StrokeThickness="1.3" Width="16" Height="16"/>
+                        </ToggleButton>
+
+                        <!-- 6. Quick Done-Check Stamp Tool (K) -->
+                        <ToggleButton x:Name="BtnToolCheckDone" Style="{StaticResource ToolRailToggle}"
+                                      Click="OnStudioToolClick" IsEnabled="{Binding HasResult}" ToolTip="완료 스탬프 툴 (K) — 클릭한 픽셀의 색 완료 처리">
+                            <Path Data="M 2.5,8.5 L 6.2,12.2 L 13.5,4"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                  StrokeThickness="1.7" Width="16" Height="16"/>
+                        </ToggleButton>
+
+                        <Border Height="1" Background="{StaticResource StudioBorderBrush}" Margin="4,5"/>
+
+                        <!-- Image Rotate 90 CW (R) -->
+                        <Button Style="{StaticResource ToolRailButton}" Click="OnRotate90Click" IsEnabled="{Binding HasSource}" ToolTip="90° 회전 (R)">
+                            <Path Data="M 12,5 A 5,5 0 1 0 13,9 M 10,2 L 12.8,5.2 L 9.2,5.8"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                  StrokeThickness="1.3" Width="16" Height="16"/>
+                        </Button>
+
+                        <!-- Image Flip Horizontal -->
+                        <Button Style="{StaticResource ToolRailButton}" Click="OnFlipHClick" IsEnabled="{Binding HasSource}" ToolTip="좌우 반전">
+                            <Path Data="M 8,2 V 14 M 2,12 L 6,4 V 12 Z M 14,12 L 10,4 V 12 Z"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                  StrokeThickness="1.2" Width="16" Height="16"/>
+                        </Button>
+
+                        <!-- Undo Pixel Edit (Ctrl+Z) -->
+                        <Button Style="{StaticResource ToolRailButton}" Click="OnUndoClick" IsEnabled="{Binding CanUndo}" ToolTip="도트 수정 되돌리기 (Ctrl + Z)">
+                            <Path Data="M 6,4 L 2.5,7 L 6,10 M 3,7 H 10.5 A 3.5,3.5 0 0 1 10.5,14 H 7"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                  StrokeThickness="1.3" Width="16" Height="16"/>
+                        </Button>
+
+                        <Border Height="1" Background="{StaticResource StudioBorderBrush}" Margin="4,5"/>
+
+                        <!-- Grid / Crosshair / Dim / Clear -->
+                        <ToggleButton Style="{StaticResource ToolRailToggle}" IsChecked="{Binding ShowPaintGrid}" ToolTip="격자 (G)">
+                            <Path Data="M 2,5 H 14 M 2,11 H 14 M 5,2 V 14 M 11,2 V 14"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                  StrokeThickness="1.2" Width="16" Height="16"/>
+                        </ToggleButton>
+                        <ToggleButton Style="{StaticResource ToolRailToggle}" IsChecked="{Binding ShowCrosshair}" ToolTip="십자선">
+                            <Path Data="M 8,1 V 6 M 8,10 V 15 M 1,8 H 6 M 10,8 H 15"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                  StrokeThickness="1.3" Width="16" Height="16"/>
+                        </ToggleButton>
+                        <ToggleButton Style="{StaticResource ToolRailToggle}" IsChecked="{Binding DimCompleted}" ToolTip="완료색 흐림">
+                            <Path Data="M 8,2 A 6,6 0 1 0 8,14 Z"
+                                  Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                  StrokeThickness="1.2" Width="16" Height="16"/>
+                        </ToggleButton>
+                        <Button Style="{StaticResource ToolRailButton}" Click="OnClearHighlightClick" IsEnabled="{Binding HasResult}" ToolTip="강조 해제 (Esc)">
+                            <Path Data="M 4,4 L 12,12 M 12,4 L 4,12"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                  StrokeThickness="1.4" Width="16" Height="16"/>
+                        </Button>
+
+                        <Border Height="1" Background="{StaticResource StudioBorderBrush}" Margin="4,5"/>
+
+                        <!-- Split / Global Hotkeys -->
+                        <ToggleButton x:Name="BtnSplitSize" Style="{StaticResource ToolRailToggle}" Click="OnToggleSplitSizeClick" ToolTip="스플릿 뷰 크기">
+                            <Path Data="M 2,3 H 14 V 13 H 2 Z M 8,3 V 13"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                  StrokeThickness="1.2" Width="16" Height="16"/>
+                        </ToggleButton>
+                        <ToggleButton Style="{StaticResource ToolRailToggle}" IsChecked="{Binding IsGlobalHotkeysEnabled, Mode=TwoWay}"
+                                      Click="OnToggleGlobalHotkeysClick" ToolTip="전역 단축키 (Ctrl+Alt)">
+                            <Path Data="M 2,5 H 14 V 12 H 2 Z M 4,8 H 6 M 7,8 H 9 M 10,8 H 12 M 5,10 H 11"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                  StrokeThickness="1.2" Width="16" Height="16"/>
+                        </ToggleButton>
+                    </StackPanel>
+                </ScrollViewer>
             </Border>
 
             <!-- CENTER: Main Artboard Canvas -->
             <Grid Grid.Column="1" Background="{StaticResource StudioCanvasWellBrush}">
                 <controls:PixelTileCanvas x:Name="MainCanvas" IsOverviewMode="True"/>
-                <!-- Shown only before first conversion when original image is loaded -->
                 <Image x:Name="EmptyOriginalPreview" Source="{Binding SourcePreview}" Stretch="Uniform" Margin="20"
                        RenderOptions.BitmapScalingMode="HighQuality" IsHitTestVisible="False"/>
+                <controls:CropOverlayCanvas x:Name="CropCanvas" Visibility="Collapsed"/>
             </Grid>
 
             <!-- Splitter -->
             <GridSplitter Grid.Column="2" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
 
-            <!-- RIGHT: Docked Studio Panels (Navigator + Swatches + Palette Filter) -->
+            <!-- RIGHT: Docked Studio Panels (Clean Navigator + Swatches + Palette Filter) -->
             <Grid Grid.Column="3" x:Name="RightDockPanel" Background="{StaticResource StudioPanelBrush}">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="165" MinHeight="110"/>
+                    <RowDefinition Height="170" MinHeight="110"/>
                     <RowDefinition Height="3"/>
                     <RowDefinition Height="*" MinHeight="160"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <!-- PANEL 1: Navigator Minimap (Click any 32x32 tile to jump!) -->
+                <!-- PANEL 1: Clean Pixel-Accurate Navigator Minimap -->
                 <DockPanel Grid.Row="0">
                     <Border DockPanel.Dock="Top" Style="{StaticResource StudioPanelHeader}">
                         <DockPanel>
-                            <TextBlock DockPanel.Dock="Left" Text="네비게이터" FontSize="11" FontWeight="SemiBold"
+                            <TextBlock DockPanel.Dock="Left" Text="{Binding NavigatorHeader}" FontSize="11" FontWeight="SemiBold"
                                        Foreground="{StaticResource StudioTextMutedBrush}" VerticalAlignment="Center"/>
                             <ToggleButton x:Name="BtnPeekOriginal" DockPanel.Dock="Right" Content="원본"
                                           Click="OnPeekOriginalChanged" Padding="6,0" MinHeight="18" FontSize="10.5"
@@ -387,7 +503,7 @@
                         </DockPanel>
                     </Border>
                     <Grid Background="{StaticResource StudioCanvasWellBrush}">
-                        <controls:PixelTileCanvas x:Name="NavigatorCanvas" IsOverviewMode="True"/>
+                        <controls:PixelTileCanvas x:Name="NavigatorCanvas" IsOverviewMode="True" IsCompactMinimap="True"/>
                         <Image x:Name="NavigatorOriginalImg" Source="{Binding SourcePreview}" Stretch="Uniform"
                                Margin="4" RenderOptions.BitmapScalingMode="HighQuality" Visibility="Collapsed"/>
                     </Grid>
@@ -446,9 +562,9 @@
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
                                 <GridViewColumn Header="✓" Width="24" DisplayMemberBinding="{Binding DoneMark}"/>
-                                <GridViewColumn Header="아이템" Width="118" DisplayMemberBinding="{Binding KoreanName}"/>
+                                <GridViewColumn Header="아이템" Width="120" DisplayMemberBinding="{Binding KoreanName}"/>
                                 <GridViewColumn Header="단계" Width="34" DisplayMemberBinding="{Binding ShadeDisplay}"/>
-                                <GridViewColumn Header="수" Width="38" DisplayMemberBinding="{Binding PixelCount}"/>
+                                <GridViewColumn Header="수" Width="40" DisplayMemberBinding="{Binding PixelCount}"/>
                             </GridView>
                         </ListView.View>
                     </ListView>

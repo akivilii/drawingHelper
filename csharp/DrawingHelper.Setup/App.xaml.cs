@@ -8,7 +8,7 @@ namespace DrawingHelper.Setup;
 public partial class App : Application
 {
     public const string AppName = "DrawingHelper";
-    public const string AppVersion = "1.0.1";
+    public const string AppVersion = "1.0.2";
     public const string UninstallRegKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\DrawingHelper";
 
     protected override void OnStartup(StartupEventArgs e)

@@ -18,7 +18,7 @@ public sealed class TileColorRow : ObservableObject
     public int PaletteIndex { get; init; }
     public required PaletteColor Color { get; init; }
     public required SolidColorBrush SwatchBrush { get; init; }
-    public int PixelCount { get; init; }
+    public int PixelCount { get; set; }
 
     public string KoreanName => Color.KoreanName;
     public string ShadeDisplay => $"{Color.Shade}";
@@ -50,11 +50,27 @@ public sealed class SelectablePaletteItem : ObservableObject
     }
 }
 
-public sealed record TileChoice(int Col, int Row, string Label);
+public sealed record TileChoice(int Col, int Row, string Label)
+{
+    public override string ToString() => Label;
+}
+
+public sealed record GridCountOption(int Tiles, int Pixels, string Label, bool IsCustomPrompt = false)
+{
+    public static readonly GridCountOption CustomPrompt = new(0, 0, "직접 입력...", IsCustomPrompt: true);
+    public override string ToString() => Label;
+}
+
+public sealed record GridFitOption(ResizeMode Mode, string Label)
+{
+    public override string ToString() => Label;
+}
 
 public sealed class MainViewModel : ObservableObject
 {
     public const int TileSize = 32;
+    public const int DefaultPresetMaxTiles = 16;
+    public const int MaxTiles = 128;
 
     private readonly ItemPalette _fullPalette;
     private Rgb24[]? _sourcePixels;
@@ -64,21 +80,23 @@ public sealed class MainViewModel : ObservableObject
     private BitmapSource? _sourcePreview;
     private ConversionResult? _result;
     private bool _isBusy;
-    private int _selectedTabIndex;
 
-    // Setup parameters
-    private string _widthText = "64";
-    private string _heightText = "64";
-    private ResizeMode _selectedResizeMode = ResizeMode.Fit;
+    // Dual sizing priority: true = 사진 기준 (image drives grid W:H), false = 칸 고정 (grid W:H drives image)
+    private bool _isImageFirstMode = true;
+    private bool _syncingTiles;
+    private GridCountOption _selectedWidthTiles;
+    private GridCountOption _selectedHeightTiles;
+    private GridFitOption _selectedGridFit;
+    private CropRect? _customCrop;
     private ColorMetric _selectedMetric = ColorMetric.Ciede2000;
     private DitherMode _selectedDither = DitherMode.None;
     private bool _showOverviewGrid = true;
-    private string _itemFilterSearch = "";
 
-    // Paint view parameters
+    // Paint & tool state
     private (int Col, int Row) _selectedTile = (0, 0);
     private TileChoice? _selectedTileChoice;
     private TileColorRow? _selectedColorRow;
+    private int _activeBrushPaletteIdx;
     private int? _highlightedPaletteIdx;
     private string? _highlightedItemName;
     private bool _highlightWholeItem;
@@ -88,13 +106,16 @@ public sealed class MainViewModel : ObservableObject
     private bool _dimCompleted = true;
     private bool _isCurrentTileDone;
 
+    // Undo stack for manual Pencil pixel edits: (gx, gy, prevPaletteIdx)
+    private readonly Stack<(int X, int Y, int PrevIdx)> _undoStack = new();
+
     // Window & status properties
     private bool _isTopmost;
     private double _windowOpacity = 1.0;
     private bool _isGlobalHotkeysEnabled;
     private string _statusText = "";
-    private string _sourceTitle = "원본";
     private string _overviewTitle = "DrawingHelper";
+    private string _navigatorHeader = "네비게이터";
     private string _checklistHeader = "";
 
     // Live hover card
@@ -108,9 +129,25 @@ public sealed class MainViewModel : ObservableObject
     private readonly Dictionary<(int Col, int Row), HashSet<int>> _completedColors = [];
 
     public event Action? CanvasStateChanged;
+    public event Action<bool>? CustomGridInputRequested; // true = Width, false = Height
 
     public MainViewModel()
     {
+        for (int n = 1; n <= DefaultPresetMaxTiles; n++)
+            GridCountOptions.Add(new GridCountOption(n, n * TileSize, $"{n} ({n * TileSize})"));
+        GridCountOptions.Add(GridCountOption.CustomPrompt);
+
+        _selectedWidthTiles = GridCountOptions[3];  // default 4 (128px)
+        _selectedHeightTiles = GridCountOptions[3]; // default 4 (128px)
+
+        GridFitOptions =
+        [
+            new GridFitOption(ResizeMode.Cover, "채우기"),
+            new GridFitOption(ResizeMode.Fit, "여백"),
+            new GridFitOption(ResizeMode.Stretch, "늘림")
+        ];
+        _selectedGridFit = GridFitOptions[0];
+
         string mdPath = LocatePaletteMarkdown();
         _fullPalette = PaletteParser.FromMarkdownFile(mdPath, verifyConsistency: true);
 
@@ -150,7 +187,8 @@ public sealed class MainViewModel : ObservableObject
     }
 
     // Collections
-    public ResizeMode[] ResizeModes { get; } = Enum.GetValues<ResizeMode>();
+    public ObservableCollection<GridCountOption> GridCountOptions { get; } = [];
+    public GridFitOption[] GridFitOptions { get; }
     public ColorMetric[] Metrics { get; } = Enum.GetValues<ColorMetric>();
     public DitherMode[] DitherModes { get; } = Enum.GetValues<DitherMode>();
     public HighlightOutlineColor[] OutlineColors { get; } = Enum.GetValues<HighlightOutlineColor>();
@@ -161,18 +199,147 @@ public sealed class MainViewModel : ObservableObject
 
     // Bindable properties
     public BitmapSource? SourcePreview { get => _sourcePreview; private set => SetProperty(ref _sourcePreview, value); }
+    public int SourceWidth => _sourceW;
+    public int SourceHeight => _sourceH;
     public ConversionResult? Result { get => _result; private set { if (SetProperty(ref _result, value)) RaisePropertyChanged(nameof(HasResult)); } }
     public bool HasSource => _sourcePixels is not null;
     public bool HasResult => _result is not null;
+    public bool CanUndo => _undoStack.Count > 0;
     public bool IsBusy { get => _isBusy; private set => SetProperty(ref _isBusy, value); }
-    public int SelectedTabIndex { get => _selectedTabIndex; set => SetProperty(ref _selectedTabIndex, value); }
 
-    public string WidthText { get => _widthText; set => SetProperty(ref _widthText, value); }
-    public string HeightText { get => _heightText; set => SetProperty(ref _heightText, value); }
-    public ResizeMode SelectedResizeMode { get => _selectedResizeMode; set => SetProperty(ref _selectedResizeMode, value); }
+    public bool IsImageFirstMode
+    {
+        get => _isImageFirstMode;
+        set
+        {
+            if (SetProperty(ref _isImageFirstMode, value))
+            {
+                RaisePropertyChanged(nameof(IsGridFirstMode));
+                if (value && HasSource)
+                    SyncHeightFromWidth();
+            }
+        }
+    }
+
+    public bool IsGridFirstMode => !_isImageFirstMode;
+
+    public GridCountOption SelectedWidthTiles
+    {
+        get => _selectedWidthTiles;
+        set
+        {
+            if (value is null) return;
+            if (value.IsCustomPrompt)
+            {
+                CustomGridInputRequested?.Invoke(true);
+                RaisePropertyChanged(nameof(SelectedWidthTiles));
+                return;
+            }
+            if (SetProperty(ref _selectedWidthTiles, value) && _isImageFirstMode && !_syncingTiles)
+                SyncHeightFromWidth();
+        }
+    }
+
+    public GridCountOption SelectedHeightTiles
+    {
+        get => _selectedHeightTiles;
+        set
+        {
+            if (value is null) return;
+            if (value.IsCustomPrompt)
+            {
+                CustomGridInputRequested?.Invoke(false);
+                RaisePropertyChanged(nameof(SelectedHeightTiles));
+                return;
+            }
+            if (SetProperty(ref _selectedHeightTiles, value) && _isImageFirstMode && !_syncingTiles)
+                SyncWidthFromHeight();
+        }
+    }
+
+    public GridCountOption GetOrAddGridOption(int tiles)
+    {
+        int clamped = Math.Clamp(tiles, 1, MaxTiles);
+        foreach (var opt in GridCountOptions)
+        {
+            if (!opt.IsCustomPrompt && opt.Tiles == clamped)
+                return opt;
+        }
+
+        var created = new GridCountOption(clamped, clamped * TileSize, $"{clamped} ({clamped * TileSize})");
+        int insertIdx = GridCountOptions.Count - 1; // right before "직접 입력..."
+        for (int i = 0; i < GridCountOptions.Count; i++)
+        {
+            if (GridCountOptions[i].IsCustomPrompt || GridCountOptions[i].Tiles > clamped)
+            {
+                insertIdx = i;
+                break;
+            }
+        }
+        GridCountOptions.Insert(insertIdx, created);
+        return created;
+    }
+
+    public void SetCustomTiles(bool isWidth, int tiles)
+    {
+        var opt = GetOrAddGridOption(tiles);
+        if (isWidth)
+            SelectedWidthTiles = opt;
+        else
+            SelectedHeightTiles = opt;
+    }
+
+    public (int W, int H) PreviewSyncedTiles(bool isWidthChanged, int newTiles)
+    {
+        int t = Math.Clamp(newTiles, 1, MaxTiles);
+        if (!_isImageFirstMode)
+            return isWidthChanged ? (t, _selectedHeightTiles.Tiles) : (_selectedWidthTiles.Tiles, t);
+
+        var (aw, ah) = ActiveAspectSize();
+        if (aw <= 0 || ah <= 0)
+            return isWidthChanged ? (t, _selectedHeightTiles.Tiles) : (_selectedWidthTiles.Tiles, t);
+
+        if (isWidthChanged)
+        {
+            double ratio = ah / aw;
+            int w = t;
+            int h = (int)Math.Round(w * ratio);
+            if (h > MaxTiles)
+            {
+                h = MaxTiles;
+                w = Math.Clamp((int)Math.Round(h / ratio), 1, MaxTiles);
+            }
+            return (w, Math.Clamp(h, 1, MaxTiles));
+        }
+        else
+        {
+            double invRatio = aw / ah;
+            int h = t;
+            int w = (int)Math.Round(h * invRatio);
+            if (w > MaxTiles)
+            {
+                w = MaxTiles;
+                h = Math.Clamp((int)Math.Round(w / invRatio), 1, MaxTiles);
+            }
+            return (Math.Clamp(w, 1, MaxTiles), h);
+        }
+    }
+
+    public GridFitOption SelectedGridFit { get => _selectedGridFit; set => SetProperty(ref _selectedGridFit, value); }
+
+    public CropRect? CustomCrop
+    {
+        get => _customCrop;
+        set
+        {
+            if (SetProperty(ref _customCrop, value))
+                RaisePropertyChanged(nameof(HasCustomCrop));
+        }
+    }
+
+    public bool HasCustomCrop => _customCrop is not null;
     public ColorMetric SelectedMetric { get => _selectedMetric; set => SetProperty(ref _selectedMetric, value); }
     public DitherMode SelectedDither { get => _selectedDither; set => SetProperty(ref _selectedDither, value); }
-    public string ItemFilterSearch { get => _itemFilterSearch; set => SetProperty(ref _itemFilterSearch, value); }
 
     public bool ShowOverviewGrid
     {
@@ -196,7 +363,10 @@ public sealed class MainViewModel : ObservableObject
         set
         {
             if (SetProperty(ref _selectedColorRow, value) && value is not null)
+            {
+                _activeBrushPaletteIdx = value.PaletteIndex;
                 HighlightPaletteIndex(value.PaletteIndex);
+            }
         }
     }
 
@@ -264,8 +434,8 @@ public sealed class MainViewModel : ObservableObject
     public bool IsGlobalHotkeysEnabled { get => _isGlobalHotkeysEnabled; set => SetProperty(ref _isGlobalHotkeysEnabled, value); }
 
     public string StatusText { get => _statusText; set => SetProperty(ref _statusText, value); }
-    public string SourceTitle { get => _sourceTitle; set => SetProperty(ref _sourceTitle, value); }
     public string OverviewTitle { get => _overviewTitle; set => SetProperty(ref _overviewTitle, value); }
+    public string NavigatorHeader { get => _navigatorHeader; set => SetProperty(ref _navigatorHeader, value); }
     public string ChecklistHeader { get => _checklistHeader; set => SetProperty(ref _checklistHeader, value); }
 
     public SolidColorBrush HoverSwatchBrush { get => _hoverSwatchBrush; private set => SetProperty(ref _hoverSwatchBrush, value); }
@@ -282,7 +452,55 @@ public sealed class MainViewModel : ObservableObject
     public string? SourceFilePath => _sourceFilePath;
 
     // ------------------------------------------------------------------
-    // Core Operations
+    // Aspect Synchronization (ImageFirst Mode)
+    // ------------------------------------------------------------------
+    private (double W, double H) ActiveAspectSize()
+    {
+        if (_customCrop is { Width: > 0, Height: > 0 } c)
+            return (c.Width, c.Height);
+        return (_sourceW, _sourceH);
+    }
+
+    private void SyncHeightFromWidth()
+    {
+        var (aw, ah) = ActiveAspectSize();
+        if (aw <= 0 || ah <= 0) return;
+
+        _syncingTiles = true;
+        try
+        {
+            var (w, h) = PreviewSyncedTiles(isWidthChanged: true, _selectedWidthTiles.Tiles);
+            if (w != _selectedWidthTiles.Tiles)
+                SelectedWidthTiles = GetOrAddGridOption(w);
+            SelectedHeightTiles = GetOrAddGridOption(h);
+        }
+        finally
+        {
+            _syncingTiles = false;
+        }
+    }
+
+    private void SyncWidthFromHeight()
+    {
+        var (aw, ah) = ActiveAspectSize();
+        if (aw <= 0 || ah <= 0) return;
+
+        _syncingTiles = true;
+        try
+        {
+            var (w, h) = PreviewSyncedTiles(isWidthChanged: false, _selectedHeightTiles.Tiles);
+            if (h != _selectedHeightTiles.Tiles)
+                SelectedHeightTiles = GetOrAddGridOption(h);
+            SelectedWidthTiles = GetOrAddGridOption(w);
+        }
+        finally
+        {
+            _syncingTiles = false;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Image Load, Rotate/Flip, Crop & Convert
     // ------------------------------------------------------------------
     public void LoadImage(string path)
     {
@@ -295,40 +513,142 @@ public sealed class MainViewModel : ObservableObject
         RaisePropertyChanged(nameof(HasSource));
 
         Result = null;
+        CustomCrop = null;
+        _undoStack.Clear();
+        RaisePropertyChanged(nameof(CanUndo));
         _completedTiles.Clear();
         _completedColors.Clear();
         TileChoices.Clear();
         TileColors.Clear();
         ClearHighlight();
 
+        if (_isImageFirstMode)
+            SyncHeightFromWidth();
+
         string fileName = Path.GetFileName(path);
-        SourceTitle = $"원본 ({w}×{h})";
         OverviewTitle = $"{fileName} ({w}×{h})";
-        StatusText = $"{fileName} ({w}×{h})";
+        NavigatorHeader = "네비게이터";
+        StatusText = $"{fileName} ({w}×{h}) · {_selectedWidthTiles.Tiles}×{_selectedHeightTiles.Tiles}칸";
         NotifyCanvasChanged();
+    }
+
+    public async Task RotateClockwise90Async()
+    {
+        if (_sourcePixels is null || _isBusy) return;
+        int newW = _sourceH;
+        int newH = _sourceW;
+        var rotated = new Rgb24[newW * newH];
+
+        for (int y = 0; y < _sourceH; y++)
+        {
+            for (int x = 0; x < _sourceW; x++)
+            {
+                int nx = _sourceH - 1 - y;
+                int ny = x;
+                rotated[ny * newW + nx] = _sourcePixels[y * _sourceW + x];
+            }
+        }
+
+        _sourcePixels = rotated;
+        _sourceW = newW;
+        _sourceH = newH;
+        CustomCrop = null;
+        SourcePreview = WpfImageBridge.CreateBitmapFromRgb(_sourcePixels, _sourceW, _sourceH);
+
+        if (_isImageFirstMode)
+        {
+            // Swap W and H tiles cleanly on 90-degree rotation
+            _syncingTiles = true;
+            (_selectedWidthTiles, _selectedHeightTiles) = (_selectedHeightTiles, _selectedWidthTiles);
+            RaisePropertyChanged(nameof(SelectedWidthTiles));
+            RaisePropertyChanged(nameof(SelectedHeightTiles));
+            _syncingTiles = false;
+        }
+
+        if (HasResult) await ConvertAsync();
+        else NotifyCanvasChanged();
+    }
+
+    public async Task FlipHorizontalAsync()
+    {
+        if (_sourcePixels is null || _isBusy) return;
+        var flipped = new Rgb24[_sourceW * _sourceH];
+        for (int y = 0; y < _sourceH; y++)
+        {
+            int row = y * _sourceW;
+            for (int x = 0; x < _sourceW; x++)
+                flipped[row + (_sourceW - 1 - x)] = _sourcePixels[row + x];
+        }
+
+        _sourcePixels = flipped;
+        if (_customCrop is { } c)
+            CustomCrop = new CropRect(Math.Max(0, _sourceW - c.X - c.Width), c.Y, c.Width, c.Height);
+        SourcePreview = WpfImageBridge.CreateBitmapFromRgb(_sourcePixels, _sourceW, _sourceH);
+
+        if (HasResult) await ConvertAsync();
+        else NotifyCanvasChanged();
+    }
+
+    public void StepWidthTiles(int delta)
+    {
+        int next = Math.Clamp(_selectedWidthTiles.Tiles + delta, 1, MaxTiles);
+        SelectedWidthTiles = GetOrAddGridOption(next);
+    }
+
+    public void StepHeightTiles(int delta)
+    {
+        int next = Math.Clamp(_selectedHeightTiles.Tiles + delta, 1, MaxTiles);
+        SelectedHeightTiles = GetOrAddGridOption(next);
+    }
+
+    public void ApplyCustomCrop(CropRect? crop)
+    {
+        CustomCrop = crop;
+        if (_isImageFirstMode)
+            SyncHeightFromWidth();
+
+        StatusText = crop is { } c
+            ? $"자르기 {c.Width}×{c.Height} → {_selectedWidthTiles.Tiles}×{_selectedHeightTiles.Tiles}칸"
+            : "자르기 해제됨";
     }
 
     public async Task ConvertAsync()
     {
         if (_sourcePixels is null || _isBusy) return;
 
-        int? reqW = string.IsNullOrWhiteSpace(WidthText) ? null : int.Parse(WidthText.Trim());
-        int? reqH = string.IsNullOrWhiteSpace(HeightText) ? null : int.Parse(HeightText.Trim());
-        if (reqW is <= 0 || reqH is <= 0)
-            throw new ArgumentException("픽셀 크기는 1 이상의 정수여야 합니다.");
+        int reqW = _selectedWidthTiles.Pixels;
+        int reqH = _selectedHeightTiles.Pixels;
 
         var excluded = PaletteFilterItems.Where(x => !x.IsIncluded).Select(x => x.ItemName).ToList();
         ItemPalette activePalette = excluded.Count > 0
             ? _fullPalette.Filter(excludeItems: excluded)
             : _fullPalette;
 
+        ResizeMode effectiveMode;
+        CropRect? effectiveCrop = _customCrop;
+
+        if (effectiveCrop is not null)
+        {
+            effectiveMode = ResizeMode.Stretch;
+        }
+        else if (_isImageFirstMode)
+        {
+            // In ImageFirst mode, WxH is already matched to image aspect; Cover trims sub-tile rounding cleanly
+            effectiveMode = ResizeMode.Cover;
+        }
+        else
+        {
+            effectiveMode = _selectedGridFit.Mode;
+        }
+
         var opts = new ConversionOptions(
             Width: reqW,
             Height: reqH,
-            ResizeMode: SelectedResizeMode,
+            ResizeMode: effectiveMode,
             ResampleMode: ResampleMode.Box,
             Metric: SelectedMetric,
-            Dithering: SelectedDither);
+            Dithering: SelectedDither,
+            Crop: effectiveCrop);
 
         var pixelsCopy = _sourcePixels;
         int sw = _sourceW, sh = _sourceH;
@@ -343,6 +663,8 @@ public sealed class MainViewModel : ObservableObject
             timer.Stop();
 
             Result = res;
+            _undoStack.Clear();
+            RaisePropertyChanged(nameof(CanUndo));
             _selectedTile = (0, 0);
             _completedTiles.Clear();
             _completedColors.Clear();
@@ -351,11 +673,14 @@ public sealed class MainViewModel : ObservableObject
 
             RefreshTileChoices();
             RebuildTileChecklist();
+            if (TileColors.Count > 0)
+                _activeBrushPaletteIdx = TileColors[0].PaletteIndex;
             NotifyCanvasChanged();
 
             var (cols, rows) = res.TileGridShape(TileSize);
             string stem = _sourceFilePath is not null ? Path.GetFileName(_sourceFilePath) : "DrawingHelper";
             OverviewTitle = $"{stem} · {res.Width}×{res.Height}";
+            NavigatorHeader = $"네비게이터 · (1, 1)";
             StatusText = $"{res.Width}×{res.Height} · {cols}×{rows}칸 · ΔE {res.MeanDeltaE2000:F1} · {timer.Elapsed.TotalMilliseconds:F0}ms";
         }
         finally
@@ -370,13 +695,9 @@ public sealed class MainViewModel : ObservableObject
             item.IsIncluded = include;
     }
 
-    public void OpenTileInPaintTab((int Col, int Row) tile)
-    {
-        if (_result is null) return;
-        SelectTile(tile);
-        SelectedTabIndex = 1;
-    }
-
+    // ------------------------------------------------------------------
+    // Tile Navigation & Pixel Tools (Select, Eyedropper, Pencil, Done, Undo)
+    // ------------------------------------------------------------------
     public void SelectTile((int Col, int Row) tile)
     {
         if (_result is null) return;
@@ -391,10 +712,25 @@ public sealed class MainViewModel : ObservableObject
 
         _isCurrentTileDone = _completedTiles.Contains(tile);
         RaisePropertyChanged(nameof(IsCurrentTileDone));
+        NavigatorHeader = $"네비게이터 · ({tile.Col + 1}, {tile.Row + 1})";
 
         RefreshTileChoices();
         RebuildTileChecklist();
         NotifyCanvasChanged();
+    }
+
+    public void OnNavigatorTileHovered(int col, int row)
+    {
+        if (_result is null) return;
+        NavigatorHeader = (col, row) == _selectedTile
+            ? $"네비게이터 · ({col + 1}, {row + 1})"
+            : $"네비게이터 · ({_selectedTile.Col + 1},{_selectedTile.Row + 1}) → ({col + 1},{row + 1})";
+    }
+
+    public void OnNavigatorHoverLeft()
+    {
+        if (_result is null) return;
+        NavigatorHeader = $"네비게이터 · ({_selectedTile.Col + 1}, {_selectedTile.Row + 1})";
     }
 
     public void StepTile(int delta)
@@ -434,10 +770,6 @@ public sealed class MainViewModel : ObservableObject
         {
             for (int c = 0; c < cols; c++)
             {
-                int x0 = c * TileSize;
-                int y0 = r * TileSize;
-                int x1 = Math.Min(x0 + TileSize, _result.Width) - 1;
-                int y1 = Math.Min(y0 + TileSize, _result.Height) - 1;
                 string mark = _completedTiles.Contains((c, r)) ? "✓ " : "";
                 var choice = new TileChoice(c, r, $"{mark}({c + 1}, {r + 1})");
                 TileChoices.Add(choice);
@@ -480,6 +812,7 @@ public sealed class MainViewModel : ObservableObject
     public void HighlightPaletteIndex(int pidx)
     {
         if (_result is null || pidx < 0 || pidx >= _result.Palette.Count) return;
+        _activeBrushPaletteIdx = pidx;
         var color = _result.Palette[pidx];
         if (HighlightWholeItem)
         {
@@ -494,7 +827,6 @@ public sealed class MainViewModel : ObservableObject
             StatusText = $"{color.KoreanName} {color.Shade}단계";
         }
 
-        // Sync selected row in checklist
         var match = TileColors.FirstOrDefault(r => r.PaletteIndex == pidx);
         if (match is not null && !ReferenceEquals(_selectedColorRow, match))
         {
@@ -528,6 +860,70 @@ public sealed class MainViewModel : ObservableObject
             ClearHighlight();
         else
             HighlightPaletteIndex(pidx);
+    }
+
+    public void OnCanvasPixelPicked(int lx, int ly, int gx, int gy)
+    {
+        if (_result is null) return;
+        int pidx = _result.PaletteIndices[gy * _result.Width + gx];
+        if (pidx < 0) return;
+
+        _activeBrushPaletteIdx = pidx;
+        var color = _result.Palette[pidx];
+        var match = TileColors.FirstOrDefault(r => r.PaletteIndex == pidx);
+        if (match is not null)
+        {
+            _selectedColorRow = match;
+            RaisePropertyChanged(nameof(SelectedColorRow));
+        }
+        StatusText = $"브러시 선택: {color.KoreanName} {color.Shade}단계 ({color.HexCode})";
+    }
+
+    public void OnCanvasPixelPainted(int lx, int ly, int gx, int gy)
+    {
+        if (_result is null) return;
+        if (_activeBrushPaletteIdx < 0 || _activeBrushPaletteIdx >= _result.Palette.Count) return;
+
+        int prev = _result.SetPixel(gx, gy, _activeBrushPaletteIdx);
+        if (prev < 0 || prev == _activeBrushPaletteIdx) return;
+
+        _undoStack.Push((gx, gy, prev));
+        RaisePropertyChanged(nameof(CanUndo));
+
+        int keepIdx = _activeBrushPaletteIdx;
+        RebuildTileChecklist();
+        var match = TileColors.FirstOrDefault(r => r.PaletteIndex == keepIdx);
+        if (match is not null)
+        {
+            _selectedColorRow = match;
+            RaisePropertyChanged(nameof(SelectedColorRow));
+        }
+        OnCanvasPixelHovered(lx, ly, gx, gy);
+        NotifyCanvasChanged();
+    }
+
+    public void UndoPixelEdit()
+    {
+        if (_result is null || _undoStack.Count == 0) return;
+        var (gx, gy, prevIdx) = _undoStack.Pop();
+        _result.SetPixel(gx, gy, prevIdx);
+        RaisePropertyChanged(nameof(CanUndo));
+        RebuildTileChecklist();
+        NotifyCanvasChanged();
+        StatusText = $"되돌리기 ({_undoStack.Count})";
+    }
+
+    public void OnCanvasPixelToggleDone(int lx, int ly, int gx, int gy)
+    {
+        if (_result is null) return;
+        int pidx = _result.PaletteIndices[gy * _result.Width + gx];
+        if (pidx < 0) return;
+        var match = TileColors.FirstOrDefault(r => r.PaletteIndex == pidx);
+        if (match is null) return;
+
+        _selectedColorRow = match;
+        RaisePropertyChanged(nameof(SelectedColorRow));
+        ToggleSelectedColorDone();
     }
 
     public void OnCanvasPixelHovered(int lx, int ly, int gx, int gy)

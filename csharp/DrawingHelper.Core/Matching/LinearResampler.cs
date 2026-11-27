@@ -17,6 +17,8 @@ public enum ResampleMode
     Nearest
 }
 
+public readonly record struct CropRect(int X, int Y, int Width, int Height);
+
 /// <summary>Gamma-correct linear-light image resampler (zero external dependencies).</summary>
 public static class LinearResampler
 {
@@ -63,10 +65,18 @@ public static class LinearResampler
         int? width,
         int? height,
         ResizeMode mode = ResizeMode.Fit,
-        ResampleMode resample = ResampleMode.Box)
+        ResampleMode resample = ResampleMode.Box,
+        CropRect? crop = null)
     {
         int cropX = 0, cropY = 0, cropW = srcW, cropH = srcH;
-        if (mode == ResizeMode.Cover && width is not null && height is not null)
+        if (crop is { } c)
+        {
+            cropX = Math.Clamp(c.X, 0, Math.Max(0, srcW - 1));
+            cropY = Math.Clamp(c.Y, 0, Math.Max(0, srcH - 1));
+            cropW = Math.Clamp(c.Width, 1, srcW - cropX);
+            cropH = Math.Clamp(c.Height, 1, srcH - cropY);
+        }
+        else if (mode == ResizeMode.Cover && width is not null && height is not null)
         {
             double srcRatio = srcW / (double)srcH;
             double dstRatio = width.Value / (double)height.Value;

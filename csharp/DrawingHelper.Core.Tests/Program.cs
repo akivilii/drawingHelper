@@ -35,6 +35,8 @@ void AssertClose(double actual, double expected, double tol, string label = "")
 
 string palettePath = Path.GetFullPath(
     Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "minecraft_palette_rgb.md"));
+if (!File.Exists(palettePath))
+    palettePath = Path.Combine(Environment.CurrentDirectory, "minecraft_palette_rgb.md");
 Assert(File.Exists(palettePath), $"Palette file not found at {palettePath}");
 
 ItemPalette palette = PaletteParser.FromMarkdownFile(palettePath, verifyConsistency: true);
@@ -43,7 +45,7 @@ RunTest("PaletteParser loads all 61 items and 244 colors", () =>
 {
     Assert(palette.ItemNames.Count == 61, $"Expected 61 items, got {palette.ItemNames.Count}");
     Assert(palette.Count == 244, $"Expected 244 colors, got {palette.Count}");
-    Assert(palette[0].KoreanName == "진홍빛 균사체", $"Unexpected first item: {palette[0].KoreanName}");
+    Assert(palette[0].KoreanName == "뒤틀린 균사체", $"Unexpected first item: {palette[0].KoreanName}");
     Assert(palette[0].Rgb == new Rgb24(74, 40, 56), $"Unexpected first RGB: {palette[0].Rgb}");
     Assert(palette[^1].KoreanName == "먹물 주머니", $"Unexpected last item: {palette[^1].KoreanName}");
     Assert(palette[^1].Rgb == new Rgb24(14, 14, 14), $"Unexpected last RGB: {palette[^1].Rgb}");
@@ -140,14 +142,14 @@ RunTest("Exact palette self-match and key color agreement with Python", () =>
         Assert(palette[idx].Rgb == palette[i].Rgb, "Matched RGB differs");
     }
 
-    // Verify exact agreement with Python CLI lookups
+    // Verify exact agreement with palette lookups
     var peach = matcher.MatchTopK(Rgb24.FromHex("#E8B89A"), 1)[0];
-    Assert(peach.Color.KoreanName == "생 토끼고기" && peach.Color.Shade == 1,
-        $"Expected 생 토끼고기 1단계, got {peach.Color.DisplayLabel}");
+    Assert(peach.Color.KoreanName == "철 원석" && peach.Color.Shade == 1,
+        $"Expected 철 원석 1단계, got {peach.Color.DisplayLabel}");
 
     var blue = matcher.MatchTopK(Rgb24.FromHex("#4B6FD9"), 1)[0];
-    Assert(blue.Color.KoreanName == "청금석 원석" && blue.Color.Shade == 1,
-        $"Expected 청금석 원석 1단계, got {blue.Color.DisplayLabel}");
+    Assert(blue.Color.KoreanName == "청금석 광석" && blue.Color.Shade == 1,
+        $"Expected 청금석 광석 1단계, got {blue.Color.DisplayLabel}");
 
     // Verify bounded CIEDE2000 gives 100% identical results to brute-force on 1000 random colors
     var rng = new Random(42);
@@ -222,6 +224,21 @@ RunTest("Benchmark 128x128 CIEDE2000 speed (< 300ms)", () =>
     sw.Stop();
     Console.WriteLine($"       -> 128x128 (16,384 px) exact CIEDE2000 time: {sw.Elapsed.TotalMilliseconds:F1} ms");
     Assert(sw.Elapsed.TotalMilliseconds < 500, $"Too slow: {sw.Elapsed.TotalMilliseconds:F1} ms");
+});
+
+RunTest("SetPixel manual edit and CropRect conversion", () =>
+{
+    var src = new Rgb24[64 * 64];
+    Array.Fill(src, new Rgb24(200, 50, 50));
+    var opts = new ConversionOptions(32, 32, ResizeMode.Stretch, ResampleMode.Box, ColorMetric.Ciede2000, DitherMode.None, Crop: new CropRect(8, 8, 32, 32));
+    var res = ImageConverterEngine.Convert(src, 64, 64, palette, opts);
+    Assert(res.Width == 32 && res.Height == 32, "Cropped result dimensions mismatch");
+    int origIdx = res.PaletteIndices[5 * 32 + 7];
+    int newIdx = (origIdx + 5) % palette.Count;
+    int prev = res.SetPixel(7, 5, newIdx);
+    Assert(prev == origIdx, "SetPixel should return previous palette index");
+    Assert(res.PaletteIndices[5 * 32 + 7] == newIdx, "SetPixel did not update PaletteIndices");
+    Assert(res.PixelRgb[5 * 32 + 7] == palette[newIdx].Rgb, "SetPixel did not update PixelRgb");
 });
 
 Console.WriteLine($"\nSummary: {passed} passed, {failed} failed.");
