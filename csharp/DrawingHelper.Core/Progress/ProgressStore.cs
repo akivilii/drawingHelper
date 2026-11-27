@@ -23,9 +23,12 @@ public sealed class ProjectProgress
 
 public static class ProgressStore
 {
+    public const long MaxProgressFileBytes = 10L * 1024 * 1024; // 10 MB cap
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
-        WriteIndented = true
+        WriteIndented = true,
+        MaxDepth = 16
     };
 
     public static void Save(string path, ProjectProgress progress)
@@ -36,6 +39,12 @@ public static class ProgressStore
 
     public static ProjectProgress Load(string path)
     {
+        var fi = new FileInfo(path);
+        if (!fi.Exists)
+            throw new FileNotFoundException("진행 파일을 찾을 수 없습니다.", path);
+        if (fi.Length > MaxProgressFileBytes)
+            throw new InvalidOperationException("진행 파일 크기가 10MB를 초과합니다.");
+
         string json = File.ReadAllText(path);
         return JsonSerializer.Deserialize<ProjectProgress>(json, JsonOpts)
             ?? new ProjectProgress();

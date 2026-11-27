@@ -88,9 +88,9 @@ public partial class SetupWindow : Window
     {
         if (_step == 1)
         {
-            if (string.IsNullOrWhiteSpace(TxtInstallDir.Text))
+            if (!App.IsSafeInstallDir(TxtInstallDir.Text.Trim(), out string reason))
             {
-                MessageBox.Show(this, "설치 폴더를 입력하세요.", "알림", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(this, reason, "알림", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
             _step = 2;
@@ -114,7 +114,7 @@ public partial class SetupWindow : Window
                 {
                     FileName = _installedExePath,
                     WorkingDirectory = Path.GetDirectoryName(_installedExePath)!,
-                    UseShellExecute = true
+                    UseShellExecute = false
                 });
             }
             Close();
@@ -145,9 +145,17 @@ public partial class SetupWindow : Window
                 int total = Math.Max(1, entries.Count + 3);
                 int done = 0;
 
+                string fullRoot = Path.GetFullPath(installDir)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    + Path.DirectorySeparatorChar;
+                var installedRelPaths = new List<string>(entries.Count + 1);
+
                 foreach (var entry in entries)
                 {
                     string destPath = Path.GetFullPath(Path.Combine(installDir, entry.FullName));
+                    if (!destPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException($"안전하지 않은 압축 경로가 감지되었습니다: {entry.FullName}");
+
                     Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
                     Dispatcher.Invoke(() =>
                     {
@@ -155,7 +163,11 @@ public partial class SetupWindow : Window
                         ProgressBar.Value = (++done) * 100.0 / total;
                     });
                     entry.ExtractToFile(destPath, overwrite: true);
+                    installedRelPaths.Add(Path.GetRelativePath(installDir, destPath));
                 }
+
+                // Persist manifest so uninstaller only removes files installed by DrawingHelper
+                File.WriteAllLines(Path.Combine(installDir, App.ManifestFileName), installedRelPaths);
 
                 string exePath = Path.Combine(installDir, "DrawingHelper.exe");
                 _installedExePath = exePath;

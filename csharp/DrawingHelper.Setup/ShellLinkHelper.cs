@@ -59,14 +59,21 @@ public static class ShellLinkHelper
     {
         Directory.CreateDirectory(Path.GetDirectoryName(shortcutPath)!);
         var link = (IShellLinkW)new ShellLink();
-        link.SetPath(targetPath);
-        link.SetWorkingDirectory(workingDirectory);
-        link.SetDescription(description);
-        if (!string.IsNullOrEmpty(arguments))
-            link.SetArguments(arguments);
-        link.SetIconLocation(iconPath ?? targetPath, 0);
+        try
+        {
+            link.SetPath(targetPath);
+            link.SetWorkingDirectory(workingDirectory);
+            link.SetDescription(description);
+            if (!string.IsNullOrEmpty(arguments))
+                link.SetArguments(arguments);
+            link.SetIconLocation(iconPath ?? targetPath, 0);
 
-        var file = (IPersistFile)link;
-        file.Save(shortcutPath, false);
+            var file = (IPersistFile)link;
+            file.Save(shortcutPath, false);
+        }
+        finally
+        {
+            Marshal.FinalReleaseComObject(link);
+        }
     }
 }

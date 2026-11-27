@@ -27,9 +27,11 @@ public sealed class GlobalHotkeyService : IDisposable
     private const int IdNextColor = 9006;
 
     [DllImport("user32.dll", SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
     [DllImport("user32.dll", SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     private HwndSource? _source;

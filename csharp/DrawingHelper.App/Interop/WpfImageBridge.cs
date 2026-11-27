@@ -10,8 +10,34 @@ namespace DrawingHelper.App.Interop;
 /// <summary>Zero-dependency WPF image codec bridge between BitmapSource and DrawingHelper.Core Rgb24[].</summary>
 public static class WpfImageBridge
 {
+    public const int MaxImageDimension = 16384;
+    public const long MaxTotalPixels = 64_000_000L; // ~256 MB BGRA cap against decompression bombs
+    public const long MaxImageFileBytes = 100L * 1024 * 1024; // 100 MB
+
     public static (Rgb24[] Pixels, int Width, int Height, BitmapSource Preview) LoadImageFile(string path)
     {
+        var fi = new FileInfo(path);
+        if (!fi.Exists)
+            throw new FileNotFoundException("이미지 파일을 찾을 수 없습니다.", path);
+        if (fi.Length > MaxImageFileBytes)
+            throw new InvalidOperationException("이미지 파일 크기가 100MB를 초과합니다.");
+
+        // Inspect image header dimensions before decoding pixels to defend against decompression bombs
+        using (var probeStream = File.OpenRead(path))
+        {
+            var decoder = BitmapDecoder.Create(probeStream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+            if (decoder.Frames.Count == 0)
+                throw new InvalidDataException("유효한 이미지 프레임이 없습니다.");
+            var frame = decoder.Frames[0];
+            int pw = frame.PixelWidth;
+            int ph = frame.PixelHeight;
+            if (pw <= 0 || ph <= 0 || pw > MaxImageDimension || ph > MaxImageDimension || (long)pw * ph > MaxTotalPixels)
+            {
+                throw new InvalidOperationException(
+                    $"이미지 해상도({pw}×{ph})가 안전 한도(최대 {MaxImageDimension}px / 6,400만 픽셀)를 초과합니다.");
+            }
+        }
+
         var bmp = new BitmapImage();
         bmp.BeginInit();
         bmp.CacheOption = BitmapCacheOption.OnLoad;
@@ -22,8 +48,8 @@ public static class WpfImageBridge
         var bgra = new FormatConvertedBitmap(bmp, PixelFormats.Bgra32, null, 0);
         int w = bgra.PixelWidth;
         int h = bgra.PixelHeight;
-        int stride = w * 4;
-        var raw = new byte[stride * h];
+        int stride = checked(w * 4);
+        var raw = new byte[checked(stride * h)];
         bgra.CopyPixels(raw, stride, 0);
 
         var pixels = new Rgb24[w * h];

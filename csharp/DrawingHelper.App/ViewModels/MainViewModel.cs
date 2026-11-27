@@ -178,8 +178,7 @@ public sealed class MainViewModel : ObservableObject
         string[] candidates =
         [
             Path.Combine(AppContext.BaseDirectory, "minecraft_palette_rgb.md"),
-            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "minecraft_palette_rgb.md")),
-            Path.Combine(Environment.CurrentDirectory, "minecraft_palette_rgb.md")
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "minecraft_palette_rgb.md"))
         ];
         foreach (string p in candidates)
             if (File.Exists(p)) return p;
@@ -1041,20 +1040,43 @@ public sealed class MainViewModel : ObservableObject
     {
         if (_result is null) return;
         var prog = ProgressStore.Load(path);
-        _completedTiles.Clear();
-        foreach (var t in prog.CompletedTiles)
-            if (t.Length == 2) _completedTiles.Add((t[0], t[1]));
+        var (cols, rows) = _result.TileGridShape(TileSize);
+        int paletteCount = _result.Palette.Count;
 
-        _completedColors.Clear();
-        foreach (var kv in prog.CompletedColors)
+        _completedTiles.Clear();
+        if (prog.CompletedTiles is not null)
         {
-            string[] parts = kv.Key.Split(',');
-            if (parts.Length == 2 && int.TryParse(parts[0], out int c) && int.TryParse(parts[1], out int r))
-                _completedColors[(c, r)] = [.. kv.Value];
+            foreach (var t in prog.CompletedTiles)
+            {
+                if (t is { Length: 2 } && t[0] >= 0 && t[0] < cols && t[1] >= 0 && t[1] < rows)
+                    _completedTiles.Add((t[0], t[1]));
+            }
         }
 
-        if (prog.SelectedTile.Length == 2)
-            SelectTile((prog.SelectedTile[0], prog.SelectedTile[1]));
+        _completedColors.Clear();
+        if (prog.CompletedColors is not null)
+        {
+            foreach (var kv in prog.CompletedColors)
+            {
+                if (kv.Value is null) continue;
+                string[] parts = kv.Key.Split(',');
+                if (parts.Length == 2 && int.TryParse(parts[0], out int c) && int.TryParse(parts[1], out int r) &&
+                    c >= 0 && c < cols && r >= 0 && r < rows)
+                {
+                    var validColors = new HashSet<int>();
+                    foreach (int idx in kv.Value)
+                    {
+                        if (idx >= 0 && idx < paletteCount)
+                            validColors.Add(idx);
+                    }
+                    if (validColors.Count > 0)
+                        _completedColors[(c, r)] = validColors;
+                }
+            }
+        }
+
+        if (prog.SelectedTile is { Length: 2 } st && st[0] >= 0 && st[0] < cols && st[1] >= 0 && st[1] < rows)
+            SelectTile((st[0], st[1]));
         else
             SelectTile((0, 0));
 
