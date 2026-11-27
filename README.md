@@ -4,7 +4,8 @@
 
 ## 다운로드 (Windows)
 
-- **[DrawingHelperSetup.exe 다운로드 (v1.1.0)](https://github.com/akivilii/drawingHelper/releases/latest/download/DrawingHelperSetup.exe)**
+- **[DrawingHelperSetup.exe 설치 파일 (v1.1.0)](https://github.com/akivilii/drawingHelper/releases/latest/download/DrawingHelperSetup.exe)**
+- **[DrawingHelper-win-x64-portable.zip 무설치 포터블 (v1.1.0)](https://github.com/akivilii/drawingHelper/releases/latest/download/DrawingHelper-win-x64-portable.zip)** *(브라우저 `.exe` 다운로드 경고 시 권장)*
 - **[SHA256SUMS.txt](https://github.com/akivilii/drawingHelper/releases/latest/download/SHA256SUMS.txt)** · **[전체 Releases 보기](https://github.com/akivilii/drawingHelper/releases)**
 
 > 설치관리자 실행 후 설치 경로와 **바탕화면 바로가기 만들기** 옵션을 선택해 간편하게 설치할 수 있으며, Windows **앱 및 기능**에서 깔끔하게 제거할 수 있습니다. (요구 사항: Windows 10/11, .NET 10 Desktop Runtime)
@@ -18,7 +19,8 @@
 - **무결성 검증 (SHA-256)**:
   ```powershell
   Get-FileHash DrawingHelperSetup.exe -Algorithm SHA256
-  # v1.1.0: 4328BCDD592AB635984E18A31B6CAFFDE5B08D9B80201BE46238B667913CA8B5
+  # Setup (v1.1.0):    4328BCDD592AB635984E18A31B6CAFFDE5B08D9B80201BE46238B667913CA8B5
+  # Portable (v1.1.0): A2D253E324A157B691AE92165DEC9E0E5A8D9CD1930AEFC7B32A3E4CE63FFB1A
   ```
 - 소스가 전체 공개되어 있으므로 원하시면 아래 명령으로 직접 빌드해서 사용하실 수도 있습니다.
 
