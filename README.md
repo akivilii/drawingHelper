@@ -4,8 +4,8 @@
 
 ## 다운로드 (Windows)
 
-- **[DrawingHelperSetup.exe 설치 파일 (v1.1.0)](https://github.com/akivilii/drawingHelper/releases/latest/download/DrawingHelperSetup.exe)**
-- **[DrawingHelper-win-x64-portable.zip 무설치 포터블 (v1.1.0)](https://github.com/akivilii/drawingHelper/releases/latest/download/DrawingHelper-win-x64-portable.zip)** *(브라우저 `.exe` 다운로드 경고 시 권장)*
+- **[DrawingHelperSetup.exe (v1.1.0)](https://github.com/akivilii/drawingHelper/releases/latest/download/DrawingHelperSetup.exe)**
+- **[DrawingHelper-win-x64-portable.zip (v1.1.0)](https://github.com/akivilii/drawingHelper/releases/latest/download/DrawingHelper-win-x64-portable.zip)** 
 - **[SHA256SUMS.txt](https://github.com/akivilii/drawingHelper/releases/latest/download/SHA256SUMS.txt)** · **[전체 Releases 보기](https://github.com/akivilii/drawingHelper/releases)**
 
 > 설치관리자 실행 후 설치 경로와 **바탕화면 바로가기 만들기** 옵션을 선택해 간편하게 설치할 수 있으며, Windows **앱 및 기능**에서 깔끔하게 제거할 수 있습니다. (요구 사항: Windows 10/11, .NET 10 Desktop Runtime)
